@@ -633,3 +633,66 @@ body {
   opacity: 0;
   transform: translateY(20px) scale(0.95);
 }
+
+/* Resource Mode Toggle (Segmented Control) */
+.header-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1.25rem;
+}
+
+.segmented-control {
+  display: flex;
+  padding: 0.25rem;
+  background: var(--bg-input);
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  margin-bottom: 0.5rem;
+}
+
+.segment-btn {
+  flex: 1;
+  padding: 0.6rem 0.75rem;
+  border-radius: 9px;
+  border: none;
+  background: transparent;
+  color: var(--text-mute);
+  font-size: 0.75rem;
+  font-weight: 800;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.23, 1, 0.32, 1);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.segment-btn:hover {
+  color: var(--text-main);
+}
+
+.segment-btn.active {
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.2);
+}
+
+.c-name-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.c-namespace {
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: var(--accent);
+  opacity: 0.8;
+  white-space: nowrap;
+}
+
+.status-pulse.status-running,
+.card-status.running {
+  background: var(--success);
+  box-shadow: 0 0 10px var(--success);
+}

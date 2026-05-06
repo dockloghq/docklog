@@ -23,6 +23,11 @@ import (
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/mem"
 	"golang.org/x/crypto/bcrypt"
+	"k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
+	"path/filepath"
 )
 
 var (
@@ -33,10 +38,12 @@ var (
 )
 
 type Container struct {
-	ID    string `json:"id"`
-	Name  string `json:"name"`
-	Image string `json:"image"`
-	State string `json:"state"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Namespace string `json:"namespace,omitempty"`
+	Image     string `json:"image"`
+	State     string `json:"state"`
+	Type      string `json:"type"` // "docker" or "pod"
 }
 
 type UserClaims struct {
@@ -151,6 +158,26 @@ func main() {
 
 	// Start Background Collector
 	startStatsCollector(cli)
+
+	// K8s Client
+	var k8sClient *kubernetes.Clientset
+	kubeconfig := filepath.Join(os.Getenv("HOME"), ".kube", "config")
+	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
+	if err != nil {
+		log.Printf("Failed to load kubeconfig from %s: %v. Attempting in-cluster config...", kubeconfig, err)
+		config, err = clientcmd.BuildConfigFromFlags("", "") // Try in-cluster
+	}
+
+	if err == nil {
+		k8sClient, err = kubernetes.NewForConfig(config)
+		if err != nil {
+			log.Printf("Failed to create K8s client: %v", err)
+		} else {
+			log.Println("Kubernetes client initialized successfully")
+		}
+	} else {
+		log.Printf("Kubernetes support disabled: %v", err)
+	}
 
 	// Auth Endpoints
 	e.POST("/api/token", func(c echo.Context) error {
@@ -305,6 +332,59 @@ func main() {
 					Name:  name,
 					Image: image,
 					State: state,
+					Type:  "docker",
+				})
+			}
+		}
+		return c.JSON(http.StatusOK, list)
+	})
+
+	r.GET("/pods", func(c echo.Context) error {
+		if k8sClient == nil {
+			return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "Kubernetes support not enabled"})
+		}
+		token := c.Get("user").(*jwt.Token)
+		user := token.Claims.(*UserClaims)
+
+		// Always check DB for current admin status
+		var dbIsAdmin bool
+		db.DB.QueryRow("SELECT COALESCE(is_admin, 0) FROM users WHERE id = ?", user.ID).Scan(&dbIsAdmin)
+
+		pods, err := k8sClient.CoreV1().Pods("").List(context.Background(), metav1.ListOptions{})
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to list pods: " + err.Error()})
+		}
+
+		var patterns []string
+		if !dbIsAdmin {
+			patterns = getAuthorizedPatterns(user.ID)
+		}
+
+		var list []Container
+		for _, pod := range pods.Items {
+			visible := dbIsAdmin
+			if !visible {
+				for _, p := range patterns {
+					if matched, _ := regexp.MatchString(p, pod.Name); matched {
+						visible = true
+						break
+					}
+				}
+			}
+
+			if visible {
+				state := string(pod.Status.Phase)
+				image := ""
+				if len(pod.Spec.Containers) > 0 {
+					image = pod.Spec.Containers[0].Image
+				}
+				list = append(list, Container{
+					ID:        pod.Namespace + "/" + pod.Name,
+					Name:      pod.Name,
+					Namespace: pod.Namespace,
+					Image:     image,
+					State:     strings.ToLower(state),
+					Type:      "pod",
 				})
 			}
 		}
@@ -864,6 +944,8 @@ func main() {
 			}
 		}
 
+		isPod := c.QueryParam("type") == "pod"
+
 		ws, err := upgrader.Upgrade(c.Response(), c.Request(), nil)
 		if err != nil {
 			return err
@@ -872,6 +954,46 @@ func main() {
 
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
+
+		if isPod {
+			if k8sClient == nil {
+				return ws.WriteMessage(websocket.TextMessage, []byte("Kubernetes support not enabled"))
+			}
+
+			// Find pod by UID or Name
+			// K8s logs need pod name and namespace. We expect 'id' to be namespace/name
+			parts := strings.Split(id, "/")
+			namespace := "default"
+			podName := id
+			if len(parts) == 2 {
+				namespace = parts[0]
+				podName = parts[1]
+			}
+
+			req := k8sClient.CoreV1().Pods(namespace).GetLogs(podName, &v1.PodLogOptions{
+				Follow:    true,
+				TailLines: func(i int64) *int64 { return &i }(200),
+			})
+			stream, err := req.Stream(ctx)
+			if err != nil {
+				return ws.WriteMessage(websocket.TextMessage, []byte("Failed to stream logs: "+err.Error()))
+			}
+			defer stream.Close()
+
+			buf := make([]byte, 1024)
+			for {
+				n, err := stream.Read(buf)
+				if n > 0 {
+					if err := ws.WriteMessage(websocket.TextMessage, buf[:n]); err != nil {
+						break
+					}
+				}
+				if err != nil {
+					break
+				}
+			}
+			return nil
+		}
 
 		out, err := cli.ContainerLogs(ctx, id, client.ContainerLogsOptions{
 			ShowStdout: true,

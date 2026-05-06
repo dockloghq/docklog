@@ -409,9 +409,9 @@ const fetchStats = async () => {
 const connect = () => {
   if (socket) socket.close();
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const token = secureStorage.getItem("token");
+  const type = props.container.type || 'docker';
   socket = new WebSocket(
-    `${protocol}//${window.location.host}/ws/logs/${props.container.id}?token=${token}`,
+    `${protocol}//${window.location.host}/ws/logs/${props.container.id}?token=${token}&type=${type}`,
   );
   socket.onmessage = (event) => {
     logs.value.push(event.data);
@@ -434,7 +434,9 @@ const connect = () => {
 
 onMounted(() => {
   connect();
-  fetchStats(); // Always fetch stats now to support top nav
+  if (props.container.type !== 'pod') {
+    fetchStats();
+  }
 });
 
 onUnmounted(() => {
@@ -446,7 +448,9 @@ watch(
   () => props.container.id,
   () => {
     connect();
-    fetchStats();
+    if (props.container.type !== 'pod') {
+      fetchStats();
+    }
   },
 );
 </script>

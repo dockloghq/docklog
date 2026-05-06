@@ -27,41 +27,58 @@
         ]"
       >
         <div class="sidebar-header">
-          <h2>RESOURCES</h2>
-          <div style="display: flex; gap: 0.4rem">
-            <button
-              v-if="!isCompact"
-              @click="sharedState.dashboardSidebarOpen = false"
-              class="mode-toggle"
-              title="Collapse Sidebar"
-            >
-              <svg
-                viewBox="0 0 24 24"
-                width="14"
-                height="14"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2.5"
+          <div class="header-top">
+            <h2>RESOURCES</h2>
+            <div style="display: flex; gap: 0.4rem">
+              <button
+                v-if="!isCompact"
+                @click="sharedState.dashboardSidebarOpen = false"
+                class="mode-toggle"
+                title="Collapse Sidebar"
               >
-                <polyline points="15 18 9 12 15 6"></polyline>
-              </svg>
+                <svg
+                  viewBox="0 0 24 24"
+                  width="14"
+                  height="14"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2.5"
+                >
+                  <polyline points="15 18 9 12 15 6"></polyline>
+                </svg>
+              </button>
+              <button
+                @click="isSplitMode = !isSplitMode"
+                :class="['mode-toggle', { active: isSplitMode }]"
+                title="Split View"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  width="14"
+                  height="14"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                  <line x1="12" y1="3" x2="12" y2="21"></line>
+                </svg>
+              </button>
+            </div>
+          </div>
+          
+          <div class="segmented-control glass">
+            <button 
+              :class="['segment-btn', { active: resourceMode === 'docker' }]"
+              @click="resourceMode = 'docker'"
+            >
+              Docker
             </button>
-            <button
-              @click="isSplitMode = !isSplitMode"
-              :class="['mode-toggle', { active: isSplitMode }]"
-              title="Split View"
+            <button 
+              :class="['segment-btn', { active: resourceMode === 'kubernetes' }]"
+              @click="resourceMode = 'kubernetes'"
             >
-              <svg
-                viewBox="0 0 24 24"
-                width="14"
-                height="14"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-                <line x1="12" y1="3" x2="12" y2="21"></line>
-              </svg>
+              Kubernetes
             </button>
           </div>
         </div>
@@ -78,7 +95,10 @@
           >
             <div class="card-status" :class="c.state"></div>
             <div class="card-info">
-              <span class="c-name">{{ c.name }}</span>
+              <div class="c-name-row">
+                <span class="c-name">{{ c.name }}</span>
+                <span v-if="c.namespace" class="c-namespace">@{{ c.namespace }}</span>
+              </div>
               <span class="c-image">{{ c.image }}</span>
             </div>
             <div
@@ -346,6 +366,7 @@ const containers = ref([]);
 const selectedContainers = ref([]);
 const isSplitMode = ref(false);
 const isCompact = ref(window.innerWidth <= 1024);
+const resourceMode = ref('docker'); // 'docker' or 'kubernetes'
 
 const handleResize = () => {
   const compact = window.innerWidth <= 1024;
@@ -436,6 +457,13 @@ watch(() => sharedState.searchQuery, () => {
   focusedIndex.value = -1;
 });
 
+watch(resourceMode, () => {
+  selectedContainers.value = [];
+  containers.value = [];
+  fetchContainers();
+  updateUrl();
+});
+
 const getStatColor = (val) => {
   if (val > 80) return "var(--error)";
   if (val > 50) return "var(--warning)";
@@ -475,7 +503,8 @@ const updateUrl = () => {
 const fetchContainers = async () => {
   try {
     const token = secureStorage.getItem("token");
-    const res = await fetch("/api/containers", {
+    const endpoint = resourceMode.value === 'docker' ? '/api/containers' : '/api/pods';
+    const res = await fetch(endpoint, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (res.ok) {
