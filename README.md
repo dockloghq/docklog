@@ -200,6 +200,7 @@ DockLog is built for the entire team.
 
 | Variable      | Description          | Default                       |
 | ------------- | -------------------- | ----------------------------- |
+| `PORT`        | Application port     | `8000`                        |
 | `SECRET_KEY`  | JWT signing secret   | `secret-key-change-this`      |
 | `DB_PATH`     | SQLite database path | `docklog.db`                  |
 | `DOCKER_HOST` | Docker daemon socket | `unix:///var/run/docker.sock` |

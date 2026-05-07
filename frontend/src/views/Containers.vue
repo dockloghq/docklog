@@ -64,9 +64,30 @@
         <tbody v-if="filteredContainers.length > 0">
           <tr v-for="c in filteredContainers" :key="c.id" class="container-row">
             <td data-label="Container Name">
-              <div class="name-cell clickable" @click="goToLogs(c.id)">
-                <span class="container-title">{{ c.name }}</span>
-                <span class="container-id">{{ c.id.substring(0, 12) }}</span>
+              <div 
+                class="name-cell clickable group" 
+                @click="goToLogs(c.id)"
+                @mouseenter="startLiveStats(c.id)"
+                @mouseleave="stopLiveStats"
+              >
+                <div class="name-main">
+                  <span class="container-title">{{ c.name }}</span>
+                  <span class="container-id">{{ c.id.substring(0, 12) }}</span>
+                </div>
+                
+                <!-- Stats Peek Hover (Live when hovering) -->
+                <div v-if="c.state === 'running'" class="row-stats-peek">
+                   <div class="r-stat">
+                     <span class="r-val" :class="{ 'text-live': activeLiveId === c.id }">
+                       {{ (activeLiveId === c.id ? liveStats.cpu : c.cpu)?.toFixed(1) || 0 }}%
+                     </span>
+                   </div>
+                   <div class="r-stat">
+                     <span class="r-val" :class="{ 'text-live': activeLiveId === c.id }">
+                       {{ formatBytes(activeLiveId === c.id ? liveStats.memory : c.memory) }}
+                     </span>
+                   </div>
+                </div>
               </div>
             </td>
             <td data-label="Image & Tag">
@@ -318,9 +339,51 @@ const formatDate = (unix) => {
   });
 };
 
+const formatBytes = (bytes) => {
+  if (!bytes || bytes === 0) return "0B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + sizes[i];
+};
+
 const router = useRouter();
 const containers = ref([]);
 const loading = ref(false);
+
+// Live Stats on Hover Logic
+const activeLiveId = ref(null);
+const liveStats = ref({ cpu: 0, memory: 0 });
+let liveInterval = null;
+
+const startLiveStats = (id) => {
+  activeLiveId.value = id;
+  fetchStatsNow(id);
+  if (liveInterval) clearInterval(liveInterval);
+  liveInterval = setInterval(() => fetchStatsNow(id), 1000);
+};
+
+const stopLiveStats = () => {
+  activeLiveId.value = null;
+  if (liveInterval) clearInterval(liveInterval);
+  liveInterval = null;
+};
+
+const fetchStatsNow = async (id) => {
+  try {
+    const token = secureStorage.getItem("token");
+    const res = await fetch(`/api/containers/${id}/stats-now`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      liveStats.value = { cpu: data.cpu, memory: data.memory };
+    }
+  } catch (err) {
+    console.error("Live stats fetch failed", err);
+  }
+};
+
 const showConfirm = ref(false);
 const pendingId = ref(null);
 const pendingAction = ref("");
@@ -393,7 +456,7 @@ const goToLogs = (id) => {
 
 onMounted(() => {
   fetchContainers();
-  refreshInterval = setInterval(fetchContainers, 5000);
+  refreshInterval = setInterval(fetchContainers, 3000);
 });
 
 onUnmounted(() => {
@@ -437,15 +500,63 @@ onUnmounted(() => {
 
 .name-cell {
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  gap: 1.5rem;
+  position: relative;
 }
 .name-cell.clickable {
   cursor: pointer;
-  transition: opacity 0.2s;
 }
-.name-cell.clickable:hover {
-  opacity: 0.7;
+.name-main {
+  display: flex;
+  flex-direction: column;
 }
+
+/* Row Stats Peek */
+.row-stats-peek {
+  display: flex;
+  gap: 1rem;
+  opacity: 0;
+  transform: translateX(-10px);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  background: var(--bg-glass);
+  padding: 0.4rem 0.8rem;
+  border-radius: 10px;
+  border: 1px solid var(--border-light);
+  pointer-events: none;
+}
+
+.name-cell:hover .row-stats-peek {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.r-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.r-val {
+  font-size: 0.75rem;
+  font-weight: 900;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  transition: color 0.3s;
+}
+
+.text-live {
+  color: var(--success) !important;
+  text-shadow: 0 0 8px rgba(var(--success-rgb), 0.4);
+}
+
+.r-lab {
+  font-size: 0.55rem;
+  font-weight: 800;
+  color: var(--text-mute);
+  text-transform: uppercase;
+}
+
 .container-title {
   font-weight: 800;
   color: var(--text-main);

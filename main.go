@@ -13,6 +13,7 @@ import (
 	"time"
 	"bytes"
 	"runtime"
+	"sync"
 
 	"docklog/db"
 
@@ -36,12 +37,16 @@ var (
 )
 
 type Container struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Image   string `json:"image"`
-	State   string `json:"state"`
-	Created int64  `json:"created"`
-	Status  string `json:"status"`
+	ID       string  `json:"id"`
+	Name     string  `json:"name"`
+	Image    string  `json:"image"`
+	State    string  `json:"state"`
+	Created  int64   `json:"created"`
+	Status   string  `json:"status"`
+	CPULimit float64 `json:"cpu_limit"`
+	MemLimit int64   `json:"mem_limit"`
+	CPU      float64 `json:"cpu"`
+	Memory   int64   `json:"memory"`
 }
 
 type UserClaims struct {
@@ -311,13 +316,33 @@ func main() {
 				createdVal, _ := ctr["Created"].(float64)
 				statusVal, _ := ctr["Status"].(string)
 
+				// Fetch detailed limits
+				inspect, _ := cli.ContainerInspect(context.Background(), id, client.ContainerInspectOptions{})
+				cpuLimit := 0.0
+				memLimit := int64(0)
+				if inspect.Container.HostConfig != nil {
+					if inspect.Container.HostConfig.NanoCPUs > 0 {
+						cpuLimit = float64(inspect.Container.HostConfig.NanoCPUs) / 1e9
+					}
+					memLimit = inspect.Container.HostConfig.Memory
+				}
+
+				// Fetch latest stats snapshot
+				var lastCPU float64
+				var lastMem int64
+				db.DB.QueryRow("SELECT cpu, memory FROM stats WHERE container_id = ? ORDER BY timestamp DESC LIMIT 1", id).Scan(&lastCPU, &lastMem)
+
 				list = append(list, Container{
-					ID:      shortID,
-					Name:    name,
-					Image:   image,
-					State:   state,
-					Created: int64(createdVal),
-					Status:  statusVal,
+					ID:       shortID,
+					Name:     name,
+					Image:    image,
+					State:    state,
+					Created:  int64(createdVal),
+					Status:   statusVal,
+					CPULimit: cpuLimit,
+					MemLimit: memLimit,
+					CPU:      lastCPU,
+					Memory:   lastMem,
 				})
 			}
 		}
@@ -678,16 +703,66 @@ func main() {
 			}
 		}
 
-		stats, err := cli.ContainerStats(context.Background(), id, client.ContainerStatsOptions{Stream: false})
+		// To get accurate CPU %, we need two samples. 
+		// We'll take a quick 200ms sample to stay responsive.
+		s1, err := cli.ContainerStats(context.Background(), id, client.ContainerStatsOptions{Stream: false})
 		if err != nil {
 			return err
 		}
-		defer stats.Body.Close()
-		var data interface{}
-		if err := json.NewDecoder(stats.Body).Decode(&data); err != nil {
+		var v1 struct {
+			CPUStats struct {
+				CPUUsage struct {
+					TotalUsage uint64 `json:"total_usage"`
+				} `json:"cpu_usage"`
+				SystemUsage uint64 `json:"system_cpu_usage"`
+			} `json:"cpu_stats"`
+		}
+		json.NewDecoder(s1.Body).Decode(&v1)
+		s1.Body.Close()
+
+		time.Sleep(500 * time.Millisecond)
+
+		s2, err := cli.ContainerStats(context.Background(), id, client.ContainerStatsOptions{Stream: false})
+		if err != nil {
 			return err
 		}
-		return c.JSON(http.StatusOK, data)
+		defer s2.Body.Close()
+
+		var v2 struct {
+			CPUStats struct {
+				CPUUsage struct {
+					TotalUsage uint64 `json:"total_usage"`
+				} `json:"cpu_usage"`
+				SystemUsage uint64 `json:"system_cpu_usage"`
+				OnlineCPUs  uint32 `json:"online_cpus"`
+			} `json:"cpu_stats"`
+			MemoryStats struct {
+				Usage uint64 `json:"usage"`
+				Stats map[string]uint64 `json:"stats"`
+			} `json:"memory_stats"`
+		}
+		if err := json.NewDecoder(s2.Body).Decode(&v2); err != nil {
+			return err
+		}
+
+		cpuDelta := float64(v2.CPUStats.CPUUsage.TotalUsage) - float64(v1.CPUStats.CPUUsage.TotalUsage)
+		systemDelta := float64(v2.CPUStats.SystemUsage) - float64(v1.CPUStats.SystemUsage)
+		
+		onlineCPUs := float64(v2.CPUStats.OnlineCPUs)
+		if onlineCPUs == 0 {
+			onlineCPUs = float64(runtime.NumCPU())
+		}
+
+		cpuPercent := 0.0
+		if systemDelta > 0 && cpuDelta > 0 {
+			cpuPercent = (cpuDelta / systemDelta) * onlineCPUs * 100.0
+		}
+		memUsed := v2.MemoryStats.Usage - (v2.MemoryStats.Stats["cache"])
+
+		return c.JSON(http.StatusOK, map[string]interface{}{
+			"cpu":    cpuPercent,
+			"memory": memUsed,
+		})
 	})
 
 	r.GET("/containers/:id/history", func(c echo.Context) error {
@@ -784,11 +859,18 @@ func main() {
 		if len(cp) > 0 {
 			cpuVal = cp[0]
 		}
+		
+		// Try to get total host cores, fallback to runtime count
+		cores, err := cpu.Counts(true)
+		if err != nil || cores == 0 {
+			cores = runtime.NumCPU()
+		}
+
 		return c.JSON(http.StatusOK, map[string]interface{}{
 			"cpu":          cpuVal,
 			"memory":       v.Used,
 			"total_memory": v.Total,
-			"cores":        runtime.NumCPU(),
+			"cores":        cores,
 		})
 	})
 
@@ -1100,8 +1182,16 @@ func main() {
 		},
 	}))
 
-	log.Println("DockLog (Go Edition) starting on :8000")
-	e.Logger.Fatal(e.Start(":8000"))
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8000"
+	}
+	if !strings.HasPrefix(port, ":") {
+		port = ":" + port
+	}
+
+	log.Printf("DockLog (Go Edition) starting on %s\n", port)
+	e.Logger.Fatal(e.Start(port))
 }
 
 func extractContainers(res interface{}) []map[string]interface{} {
@@ -1138,7 +1228,7 @@ func startStatsCollector(cli *client.Client) {
 	// Initial collection
 	collectStats(cli)
 
-	ticker := time.NewTicker(10 * time.Minute)
+	ticker := time.NewTicker(30 * time.Second)
 	go func() {
 		for range ticker.C {
 			collectStats(cli)
@@ -1149,12 +1239,84 @@ func startStatsCollector(cli *client.Client) {
 	}()
 }
 
+var (
+	prevStats = make(map[string]struct {
+		TotalUsage  uint64
+		SystemUsage uint64
+	})
+	prevStatsMu sync.Mutex
+)
+
 func collectStats(cli *client.Client) {
 	// System Stats
 	v, _ := mem.VirtualMemory()
 	cp, _ := cpu.Percent(time.Second, false)
 	if len(cp) > 0 {
 		db.DB.Exec("INSERT INTO system_stats (cpu, memory) VALUES (?, ?)", cp[0], v.Used)
+	}
+
+	// Container Stats Snapshot
+	res, _ := cli.ContainerList(context.Background(), client.ContainerListOptions{})
+	containers := extractContainers(res)
+	for _, ctr := range containers {
+		id, _ := ctr["ID"].(string)
+		if id == "" {
+			id, _ = ctr["Id"].(string)
+		}
+		state, _ := ctr["State"].(string)
+		if state != "running" {
+			continue
+		}
+		stats, err := cli.ContainerStats(context.Background(), id, client.ContainerStatsOptions{Stream: false})
+		if err != nil {
+			continue
+		}
+		var s struct {
+			CPUStats struct {
+				CPUUsage struct {
+					TotalUsage uint64 `json:"total_usage"`
+				} `json:"cpu_usage"`
+				SystemUsage uint64 `json:"system_usage"`
+				OnlineCPUs  uint32 `json:"online_cpus"`
+			} `json:"cpu_stats"`
+			MemoryStats struct {
+				Usage uint64 `json:"usage"`
+				Stats map[string]uint64 `json:"stats"`
+			} `json:"memory_stats"`
+		}
+		if err := json.NewDecoder(stats.Body).Decode(&s); err != nil {
+			stats.Body.Close()
+			continue
+		}
+		stats.Body.Close()
+
+		cpuPercent := 0.0
+		prevStatsMu.Lock()
+		prev, ok := prevStats[id]
+		if ok {
+			cpuDelta := float64(s.CPUStats.CPUUsage.TotalUsage) - float64(prev.TotalUsage)
+			systemDelta := float64(s.CPUStats.SystemUsage) - float64(prev.SystemUsage)
+			
+			onlineCPUs := float64(s.CPUStats.OnlineCPUs)
+			if onlineCPUs == 0 {
+				onlineCPUs = float64(runtime.NumCPU())
+			}
+
+			if systemDelta > 0 && cpuDelta > 0 {
+				cpuPercent = (cpuDelta / systemDelta) * onlineCPUs * 100.0
+			}
+		}
+		prevStats[id] = struct {
+			TotalUsage  uint64
+			SystemUsage uint64
+		}{
+			TotalUsage:  s.CPUStats.CPUUsage.TotalUsage,
+			SystemUsage: s.CPUStats.SystemUsage,
+		}
+		prevStatsMu.Unlock()
+
+		memUsed := s.MemoryStats.Usage - (s.MemoryStats.Stats["cache"])
+		db.DB.Exec("INSERT INTO stats (container_id, cpu, memory) VALUES (?, ?, ?)", id, cpuPercent, memUsed)
 	}
 }
 

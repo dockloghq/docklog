@@ -522,27 +522,29 @@ const fetchStats = async () => {
           const data = JSON.parse(line);
           const cpuDelta =
             data.cpu_stats.cpu_usage.total_usage -
-            data.precpu_stats.cpu_usage.total_usage;
+            (data.precpu_stats?.cpu_usage?.total_usage || 0);
           const systemDelta =
             data.cpu_stats.system_cpu_usage -
-            data.precpu_stats.system_cpu_usage;
-          let cpuPercent =
-            systemDelta > 0
-              ? (cpuDelta / systemDelta) *
-                (data.cpu_stats.online_cpus || 1) *
-                100.0
-              : 0;
+            (data.precpu_stats?.system_cpu_usage || 0);
+          
+          const onlineCPUs = data.cpu_stats.online_cpus || 1;
+          let cpuPercent = 0;
+          if (systemDelta > 0 && cpuDelta > 0) {
+            cpuPercent = (cpuDelta / systemDelta) * onlineCPUs * 100.0;
+          }
+
           const used =
-            data.memory_stats.usage - (data.memory_stats.stats.cache || 0);
-          const cores = data.cpu_stats.online_cpus || 1;
+            data.memory_stats.usage - (data.memory_stats.stats?.cache || 0);
           const quota = data.cpu_stats.cpu_quota || 0;
           const period = data.cpu_stats.cpu_period || 100000;
-          const assignedCores = quota > 0 ? (quota / period).toFixed(1) : cores;
+          
+          // Priority: 1. HostConfig limit (from props), 2. CFS Quota (from stats), 3. Total Cores
+          let assignedCores = props.container.cpu_limit || (quota > 0 ? (quota / period) : onlineCPUs);
+          if (typeof assignedCores === 'number') assignedCores = assignedCores.toFixed(1);
 
-          const normalizedCpu = cpuPercent / cores;
           stats.value = {
-            cpu: normalizedCpu.toFixed(2),
-            cores: cores,
+            cpu: cpuPercent.toFixed(2),
+            cores: onlineCPUs,
             assignedCores: assignedCores,
             memory: `${formatBytes(used)} / ${formatBytes(data.memory_stats.limit)}`,
           };

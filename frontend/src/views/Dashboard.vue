@@ -370,7 +370,7 @@ const executeAction = () => {
 
 onMounted(() => {
   fetchContainers();
-  refreshInterval = setInterval(fetchContainers, 5000);
+  refreshInterval = setInterval(fetchContainers, 3000);
 });
 
 onUnmounted(() => {

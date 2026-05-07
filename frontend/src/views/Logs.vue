@@ -126,15 +126,31 @@
         <div
           v-for="c in filteredContainers"
           :key="c.id"
-          class="resource-card"
+          class="resource-card group"
           :class="{ active: isVisible(c.id) }"
           @click="toggleStream(c.id)"
+          @mouseenter="startLiveStats(c.id)"
+          @mouseleave="stopLiveStats"
         >
           <!-- Status dot indicator -->
           <div class="card-status-dot" :class="c.state"></div>
           <div class="card-info">
             <span class="card-name">{{ c.name }}</span>
             <span class="card-image-tag">{{ c.image }}</span>
+          </div>
+
+          <!-- Stats Peek (Only for running) -->
+          <div v-if="c.state === 'running'" class="stats-peek-inline">
+            <div class="peek-stat">
+              <span class="p-value" :class="{ 'text-live': activeLiveId === c.id }">
+                {{ (activeLiveId === c.id ? liveStats.cpu : c.cpu)?.toFixed(1) || 0 }}%
+              </span>
+            </div>
+            <div class="peek-stat">
+              <span class="p-value" :class="{ 'text-live': activeLiveId === c.id }">
+                {{ formatBytes(activeLiveId === c.id ? liveStats.memory : c.memory) }}
+              </span>
+            </div>
           </div>
         </div>
         <div v-if="filteredContainers.length === 0" class="empty-search-msg">
@@ -239,7 +255,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from "vue";
+import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { sharedState, showToast, fetchCurrentUser } from "../utils/sharedState";
 import { secureStorage } from "../utils/storage";
@@ -254,7 +270,49 @@ const toggleTheme = () => {
   document.documentElement.setAttribute("data-theme", sharedState.theme);
 };
 
+const formatBytes = (bytes) => {
+  if (!bytes || bytes === 0) return "0B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + sizes[i];
+};
+
 const containers = ref([]);
+
+// Live Stats on Hover Logic
+const activeLiveId = ref(null);
+const liveStats = ref({ cpu: 0, memory: 0 });
+let liveInterval = null;
+
+const startLiveStats = (id) => {
+  activeLiveId.value = id;
+  fetchStatsNow(id);
+  if (liveInterval) clearInterval(liveInterval);
+  liveInterval = setInterval(() => fetchStatsNow(id), 1000);
+};
+
+const stopLiveStats = () => {
+  activeLiveId.value = null;
+  if (liveInterval) clearInterval(liveInterval);
+  liveInterval = null;
+};
+
+const fetchStatsNow = async (id) => {
+  try {
+    const token = secureStorage.getItem("token");
+    const res = await fetch(`/api/containers/${id}/stats-now`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      liveStats.value = { cpu: data.cpu, memory: data.memory };
+    }
+  } catch (err) {
+    console.error("Live stats fetch failed", err);
+  }
+};
+
 const filteredContainers = computed(() => {
   if (!sharedState.searchQuery) return containers.value;
   const q = sharedState.searchQuery.toLowerCase();
@@ -266,22 +324,42 @@ const selectedIds = ref([]);
 const isSidebarHidden = ref(window.innerWidth < 1024);
 const splitView = ref(route.query.split === "true");
 
-/**
- * DISPLAY LOGIC:
- * 1. If splitView is true: shows last 2 items.
- * 2. If splitView is false: shows only the absolute latest item.
- */
-const displayContainers = computed(() => {
-  const all = containers.value.filter((c) => selectedIds.value.includes(c.id));
-  if (all.length === 0) return [];
+const syncStateFromUrl = () => {
+  const urlParam = route.query.c;
+  if (!urlParam) {
+    selectedIds.value = [];
+    return;
+  }
+  const urlIds = urlParam.split(",").filter(Boolean);
+  selectedIds.value = urlIds;
+  splitView.value = route.query.split === "true";
+  console.log("[Logs] Synced IDs from URL:", selectedIds.value);
+};
 
-  // Ensure we maintain selection order
+// Ensure we match containers even if short IDs are provided in the URL
+const displayContainers = computed(() => {
+  if (containers.value.length === 0) return [];
+  
   const ordered = selectedIds.value
-    .map((id) => containers.value.find((c) => c.id === id))
+    .map((id) => {
+      // Try exact match first
+      let match = containers.value.find((c) => c.id === id);
+      // Fallback: match by prefix (handle short IDs)
+      if (!match) {
+        match = containers.value.find((c) => c.id.startsWith(id) || id.startsWith(c.id));
+      }
+      return match;
+    })
     .filter(Boolean);
 
-  return splitView.value ? ordered.slice(-2) : [ordered[ordered.length - 1]];
+  return splitView.value ? ordered.slice(-2) : [ordered[ordered.length - 1]].filter(Boolean);
 });
+
+watch(() => containers.value, () => {
+  if (selectedIds.value.length > 0) {
+    console.log("[Logs] Containers loaded, applying selection from URL");
+  }
+}, { immediate: true });
 
 const isVisible = (id) => displayContainers.value.some((c) => c.id === id);
 const gridClass = computed(() =>
@@ -301,12 +379,6 @@ const fetchContainers = async () => {
   } catch (err) {
     console.error(err);
   }
-};
-
-const syncStateFromUrl = () => {
-  const urlIds = route.query.c?.split(",").filter(Boolean) || [];
-  selectedIds.value = urlIds;
-  splitView.value = route.query.split === "true";
 };
 
 const updateUrl = () => {
@@ -358,7 +430,18 @@ const removeStream = (id) => {
   updateUrl();
 };
 
-onMounted(fetchContainers);
+let statusInterval = null;
+
+onMounted(() => {
+  fetchContainers();
+  // Real-time status heartbeat
+  statusInterval = setInterval(fetchContainers, 3000);
+});
+
+onUnmounted(() => {
+  if (statusInterval) clearInterval(statusInterval);
+});
+
 watch(() => route.query, syncStateFromUrl);
 </script>
 
@@ -461,11 +544,65 @@ watch(() => route.query, syncStateFromUrl);
   cursor: pointer;
   border: 1px solid var(--border);
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
 }
 
 .resource-card:hover {
   border-color: var(--accent);
   transform: translateX(4px);
+  background: var(--bg-card-hover);
+}
+
+/* Stats Peek Styling */
+.stats-peek-inline {
+  position: absolute;
+  right: 0.75rem;
+  top: 50%;
+  transform: translateY(-50%) translateX(10px);
+  display: flex;
+  gap: 0.75rem;
+  background: var(--bg-glass);
+  backdrop-filter: blur(8px);
+  padding: 0.4rem 0.6rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-light);
+  opacity: 0;
+  pointer-events: none;
+  transition: all 0.2s ease;
+  z-index: 10;
+}
+
+.resource-card:hover .stats-peek-inline {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
+}
+
+.peek-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.p-label {
+  font-size: 0.55rem;
+  font-weight: 900;
+  color: var(--text-mute);
+  text-transform: uppercase;
+}
+
+.p-value {
+  font-size: 0.7rem;
+  font-weight: 800;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  transition: color 0.3s;
+}
+
+.text-live {
+  color: var(--success) !important;
+  text-shadow: 0 0 8px rgba(var(--success-rgb), 0.4);
 }
 
 .resource-card.active {
