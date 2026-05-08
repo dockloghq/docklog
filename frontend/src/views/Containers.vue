@@ -102,7 +102,14 @@
               <span class="date-label">{{ formatDate(c.created) }}</span>
             </td>
             <td data-label="Uptime">
-              <span class="uptime-label">{{ c.status }}</span>
+              <span
+                :class="[
+                  'uptime-label',
+                  c.state === 'running' ? 'is-running' : 'is-stopped',
+                ]"
+              >
+                {{ c.status }}
+              </span>
             </td>
             <td data-label="State">
               <div
@@ -605,7 +612,9 @@ onUnmounted(() => {
   padding: 0.4rem 0.8rem;
   border-radius: 10px;
   width: fit-content;
-  border: 1px solid transparent;
+  border: 1px solid rgba(var(--accent-rgb), 0.2);
+  background: rgba(var(--accent-rgb), 0.05);
+  color: var(--accent);
 }
 
 .pulse-dot {
@@ -615,9 +624,7 @@ onUnmounted(() => {
 }
 
 .is-running {
-  background: rgba(var(--success-rgb), 0.1);
-  color: var(--success);
-  border-color: rgba(var(--success-rgb), 0.2);
+  color: var(--success) !important;
 }
 .is-running .pulse-dot {
   background: var(--success);
@@ -626,12 +633,10 @@ onUnmounted(() => {
 }
 
 .is-stopped {
-  background: rgba(var(--stop-rgb), 0.1);
-  color: var(--stop);
-  border-color: rgba(var(--stop-rgb), 0.2);
+  color: var(--error) !important;
 }
 .is-stopped .pulse-dot {
-  background: var(--stop);
+  background: var(--error);
 }
 
 @keyframes pulse {

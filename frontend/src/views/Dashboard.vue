@@ -1,19 +1,5 @@
 <template>
   <div class="dashboard-container">
-    <!-- Provider Context Banner -->
-    <div v-if="sharedState.activeProvider === 'kubernetes'" class="k8s-banner glass animate-slide-up">
-      <div class="banner-content">
-        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.5">
-          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
-          <line x1="12" y1="9" x2="12" y2="13"></line>
-          <line x1="12" y1="17" x2="12.01" y2="17"></line>
-        </svg>
-        <div class="banner-text">
-          <h4>Kubernetes Integration Pending</h4>
-          <p>K8s monitoring is currently in beta. Connection to your cluster is being established.</p>
-        </div>
-      </div>
-    </div>
 
     <!-- Summary Stats -->
     <div class="summary-grid animate-slide-up">
@@ -92,7 +78,7 @@
                 <th>Image & Tag</th>
                 <th>Created</th>
                 <th>Uptime</th>
-                <th>Status</th>
+                <th>State</th>
                 <th class="text-right">Control</th>
               </tr>
             </thead>
@@ -103,9 +89,40 @@
                 class="container-row"
               >
                 <td data-label="Container Name">
-                  <div class="name-cell">
-                    <span class="container-title">{{ c.name }}</span>
-                    <span class="container-id">{{ c.id.substring(0, 12) }}</span>
+                  <div
+                    class="name-cell clickable group"
+                    @click="goToLogs(c.id)"
+                    @mouseenter="startLiveStats(c.id)"
+                    @mouseleave="stopLiveStats"
+                  >
+                    <div class="name-main">
+                      <span class="container-title">{{ c.name }}</span>
+                      <span class="container-id">{{ c.id.substring(0, 12) }}</span>
+                    </div>
+
+                    <!-- Stats Peek Hover (Live when hovering) -->
+                    <div v-if="c.state === 'running'" class="row-stats-peek">
+                      <div class="r-stat">
+                        <span
+                          class="r-val"
+                          :class="{ 'text-live': activeLiveId === c.id }"
+                        >
+                          {{
+                            (activeLiveId === c.id ? liveStats.cpu : c.cpu)?.toFixed(2) || "0.00"
+                          }}%
+                        </span>
+                      </div>
+                      <div class="r-stat">
+                        <span
+                          class="r-val"
+                          :class="{ 'text-live': activeLiveId === c.id }"
+                        >
+                          {{
+                            formatBytes(activeLiveId === c.id ? liveStats.memory : c.memory)
+                          }}
+                        </span>
+                      </div>
+                    </div>
                   </div>
                 </td>
                 <td data-label="Image & Tag">
@@ -120,9 +137,16 @@
                   <span class="date-label">{{ formatDate(c.created) }}</span>
                 </td>
                 <td data-label="Uptime">
-                  <span class="uptime-label">{{ c.status }}</span>
+                  <span
+                    :class="[
+                      'uptime-label',
+                      c.state === 'running' ? 'is-running' : 'is-stopped',
+                    ]"
+                  >
+                    {{ c.status }}
+                  </span>
                 </td>
-                <td data-label="Status">
+                <td data-label="State">
                   <div
                     :class="[
                       'status-pill',
@@ -269,7 +293,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { secureStorage } from "../utils/storage";
-import { sharedState, showToast } from "../utils/sharedState";
+import { sharedState, showToast, formatBytes } from "../utils/sharedState";
 
 const formatDate = (unix) => {
   if (!unix) return "N/A";
@@ -294,6 +318,34 @@ const actionClass = computed(() => {
     return "error";
   return "";
 });
+
+const liveStats = ref({ cpu: 0, memory: 0 });
+const activeLiveId = ref(null);
+let statsTimer = null;
+
+const startLiveStats = async (id) => {
+  activeLiveId.value = id;
+  fetchStatsNow(id);
+  statsTimer = setInterval(() => fetchStatsNow(id), 2000);
+};
+
+const stopLiveStats = () => {
+  activeLiveId.value = null;
+  if (statsTimer) clearInterval(statsTimer);
+};
+
+const fetchStatsNow = async (id) => {
+  try {
+    const token = secureStorage.getItem("token");
+    const res = await fetch(`/api/containers/${id}/stats-now`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      liveStats.value = { cpu: data.cpu, memory: data.memory };
+    }
+  } catch (err) {}
+};
 let refreshInterval = null;
 
 const runningCount = computed(
@@ -386,32 +438,6 @@ onUnmounted(() => {
   padding-bottom: 1.5rem;
 }
 
-.k8s-banner {
-  padding: 1.5rem 2rem;
-  border-radius: 20px;
-  background: rgba(245, 158, 11, 0.05);
-  border: 1px solid rgba(245, 158, 11, 0.2);
-  color: #f59e0b;
-}
-
-.banner-content {
-  display: flex;
-  align-items: center;
-  gap: 1.5rem;
-}
-
-.banner-text h4 {
-  margin: 0;
-  font-size: 1rem;
-  font-weight: 900;
-}
-
-.banner-text p {
-  margin: 0.2rem 0 0;
-  font-size: 0.85rem;
-  font-weight: 500;
-  opacity: 0.8;
-}
 
 .dashboard-grid {
   display: grid;
@@ -487,9 +513,9 @@ onUnmounted(() => {
 }
 
 .icon-btn {
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
   border: 1px solid var(--border);
   background: var(--bg-input);
   color: var(--text-dim);
@@ -497,18 +523,20 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .icon-btn:hover {
   background: var(--bg-card);
+  transform: translateY(-2px);
   color: var(--text-main);
   border-color: var(--accent);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 }
 
-.icon-btn.start:hover { color: var(--success); border-color: var(--success); }
-.icon-btn.stop:hover { color: var(--error); border-color: var(--error); }
-.icon-btn.restart:hover { color: var(--warning); border-color: var(--warning); }
+.icon-btn.start:hover { color: var(--success); border-color: var(--success); box-shadow: 0 4px 12px rgba(var(--success-rgb), 0.2); }
+.icon-btn.stop:hover { color: var(--error); border-color: var(--error); box-shadow: 0 4px 12px rgba(var(--error-rgb), 0.2); }
+.icon-btn.restart:hover { color: var(--warning); border-color: var(--warning); box-shadow: 0 4px 12px rgba(var(--warning-rgb), 0.2); }
 .icon-btn.logs:hover {
   color: var(--accent);
   border-color: var(--accent);
@@ -516,12 +544,63 @@ onUnmounted(() => {
 }
 
 
+/* Row Stats Peek */
+.row-stats-peek {
+  display: flex;
+  gap: 1rem;
+  opacity: 0;
+  transform: translateX(-10px);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  background: var(--bg-card);
+  padding: 0.4rem 0.8rem;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  pointer-events: none;
+  margin-left: 1rem;
+}
+
+.name-cell:hover .row-stats-peek {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.r-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.r-val {
+  font-size: 0.75rem;
+  font-weight: 900;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  transition: color 0.3s;
+}
+
+.text-live {
+  color: var(--success) !important;
+  text-shadow: 0 0 8px rgba(var(--success-rgb), 0.4);
+}
+
+.r-lab {
+  font-size: 0.55rem;
+  font-weight: 800;
+  color: var(--text-mute);
+  text-transform: uppercase;
+}
 
 .name-cell {
   display: flex;
-  flex-direction: column;
-  text-align: left;
+  align-items: center;
+  min-width: 0;
 }
+
+.name-main {
+  display: flex;
+  flex-direction: column;
+}
+
 .container-title {
   font-weight: 850;
   color: var(--text-main);
@@ -564,7 +643,9 @@ onUnmounted(() => {
   padding: 0.4rem 0.8rem;
   border-radius: 10px;
   width: fit-content;
-  border: 1px solid transparent;
+  border: 1px solid rgba(var(--accent-rgb), 0.2);
+  background: rgba(var(--accent-rgb), 0.05);
+  color: var(--accent);
 }
 
 .pulse-dot {
@@ -574,9 +655,7 @@ onUnmounted(() => {
 }
 
 .is-running {
-  background: rgba(var(--success-rgb), 0.1);
-  color: var(--success);
-  border-color: rgba(var(--success-rgb), 0.2);
+  color: var(--success) !important;
 }
 .is-running .pulse-dot {
   background: var(--success);
@@ -585,9 +664,7 @@ onUnmounted(() => {
 }
 
 .is-stopped {
-  background: rgba(var(--error-rgb), 0.1);
-  color: var(--error);
-  border-color: rgba(var(--error-rgb), 0.2);
+  color: var(--error) !important;
 }
 .is-stopped .pulse-dot {
   background: var(--error);
@@ -654,14 +731,6 @@ onUnmounted(() => {
 @media (max-width: 480px) {
   .summary-grid {
     grid-template-columns: 1fr !important;
-  }
-  .k8s-banner {
-    padding: 1rem;
-  }
-  .banner-content {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 0.75rem;
   }
   .stat-value {
     font-size: 1.5rem;

@@ -3,10 +3,14 @@
 :root {
   /* Core Brand Colors */
   --accent: #6366f1;
+  --accent-rgb: 99, 102, 241;
   --accent-hover: #4f46e5;
   --success: #10b981;
+  --success-rgb: 16, 185, 129;
   --error: #ef4444;
+  --error-rgb: 239, 68, 68;
   --warning: #f59e0b;
+  --warning-rgb: 245, 158, 11;
   --logo-filter: none;
   
   --font-main: 'Outfit', sans-serif;
@@ -324,6 +328,7 @@ body {
   flex-direction: column;
   gap: 0.5rem;
   flex: 1;
+  margin-top: 1rem;
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-width: none;
@@ -878,9 +883,9 @@ body {
   transition: all 0.3s;
 }
 
-.modal-icon.success { background: rgba(16, 185, 129, 0.1); color: var(--success); }
-.modal-icon.warning { background: rgba(245, 158, 11, 0.1); color: var(--warning); }
-.modal-icon.error { background: rgba(239, 68, 68, 0.1); color: var(--error); }
+.modal-icon.success { background: rgba(var(--success-rgb), 0.1); color: var(--success); }
+.modal-icon.warning { background: rgba(var(--warning-rgb), 0.1); color: var(--warning); }
+.modal-icon.error { background: rgba(var(--error-rgb), 0.1); color: var(--error); }
 
 .modal-icon svg {
   width: 32px;
@@ -930,12 +935,12 @@ body {
 .modal-btn.confirm {
   background: var(--accent);
   color: #fff;
-  box-shadow: 0 8px 20px rgba(99, 102, 241, 0.3);
+  box-shadow: 0 8px 20px rgba(var(--accent-rgb), 0.3);
 }
 
-.modal-btn.confirm.success { background: var(--success); box-shadow: 0 8px 20px rgba(16, 185, 129, 0.3); }
-.modal-btn.confirm.warning { background: var(--warning); box-shadow: 0 8px 20px rgba(245, 158, 11, 0.3); }
-.modal-btn.confirm.error { background: var(--error); box-shadow: 0 8px 20px rgba(239, 68, 68, 0.3); }
+.modal-btn.confirm.success { background: var(--success); box-shadow: 0 8px 20px rgba(var(--success-rgb), 0.3); }
+.modal-btn.confirm.warning { background: var(--warning); box-shadow: 0 8px 20px rgba(var(--warning-rgb), 0.3); }
+.modal-btn.confirm.error { background: var(--error); box-shadow: 0 8px 20px rgba(var(--error-rgb), 0.3); }
 
 .modal-btn:hover {
   transform: translateY(-2px);

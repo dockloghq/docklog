@@ -76,52 +76,6 @@
         </button>
       </div>
 
-      <!-- Provider Toggle -->
-      <div class="provider-toggle-wrap">
-        <div class="provider-toggle glass">
-          <button
-            @click="sharedState.activeProvider = 'docker'"
-            :class="[
-              'p-toggle-btn',
-              { active: sharedState.activeProvider === 'docker' },
-            ]"
-          >
-            <svg
-              viewBox="0 0 24 24"
-              width="14"
-              height="14"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="3"
-            >
-              <path d="M22 12h-4l-3 9L9 3l-3 9H2"></path>
-            </svg>
-            Docker
-          </button>
-          <button
-            @click="sharedState.activeProvider = 'kubernetes'"
-            :class="[
-              'p-toggle-btn',
-              { active: sharedState.activeProvider === 'kubernetes' },
-            ]"
-          >
-            <svg
-              viewBox="0 0 24 24"
-              width="14"
-              height="14"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="3"
-            >
-              <path
-                d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"
-              ></path>
-            </svg>
-            K8s
-          </button>
-          <div class="toggle-slider" :class="sharedState.activeProvider"></div>
-        </div>
-      </div>
 
       <nav class="menu-groups">
         <router-link
@@ -582,8 +536,8 @@ const toggleTheme = () => {
 const getStatColor = (val) => {
   const v = parseFloat(val);
   if (v > 80) return "var(--error)";
-  if (v > 50) return "#f59e0b";
-  return "var(--success)";
+  if (v > 50) return "var(--warning)";
+  return "var(--accent)";
 };
 
 const toggleDashboardSidebar = () => {
@@ -757,58 +711,6 @@ onUnmounted(() => {
   display: flex;
   overflow: hidden;
   background: var(--bg-main);
-}
-
-.provider-toggle-wrap {
-  padding: 1.25rem 0;
-}
-
-.provider-toggle {
-  display: flex;
-  position: relative;
-  padding: 0.35rem;
-  border-radius: 14px;
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  gap: 0.25rem;
-}
-
-.p-toggle-btn {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  padding: 0.6rem;
-  border: none;
-  background: transparent;
-  color: var(--text-mute);
-  font-size: 0.75rem;
-  font-weight: 850;
-  cursor: pointer;
-  z-index: 1;
-  transition: all 0.3s;
-}
-
-.p-toggle-btn.active {
-  color: #fff;
-}
-
-.toggle-slider {
-  position: absolute;
-  top: 0.35rem;
-  left: 0.35rem;
-  width: calc(50% - 0.35rem - 0.125rem);
-  height: calc(100% - 0.7rem);
-  background: var(--accent);
-  border-radius: 10px;
-  transition: all 0.4s cubic-bezier(0.23, 1, 0.32, 1);
-  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
-}
-
-.toggle-slider.kubernetes {
-  transform: translateX(100%);
-  margin-left: 0.25rem;
 }
 
 .layout-main-content {

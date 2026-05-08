@@ -17,7 +17,6 @@ export const sharedState = reactive({
     type: 'success'
   },
   isBackendDisconnected: false,
-  activeProvider: 'docker', // 'docker' or 'kubernetes'
 });
 
 export const showToast = (title, message, type = 'success') => {
