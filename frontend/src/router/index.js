@@ -3,6 +3,7 @@ import Dashboard from '../views/Dashboard.vue';
 import Admin from '../views/Admin.vue';
 import Login from '../views/Login.vue';
 import { secureStorage, parseJwt } from '../utils/storage';
+import { sharedState } from '../utils/sharedState';
 
 const routes = [
   { path: '/', redirect: '/dashboard' },
@@ -67,16 +68,47 @@ const router = createRouter({
   routes
 });
 
-router.beforeEach((to, from, next) => {
-  const token = secureStorage.getItem('token');
-  const claims = parseJwt(token);
-  const isAdmin = claims?.is_admin === true;
+router.beforeEach(async (to, from, next) => {
+  if (!sharedState.configLoaded) {
+    try {
+      const res = await fetch('/api/config');
+      if (res.ok) {
+        const data = await res.json();
+        sharedState.isAuthDisabled = data.auth_disabled === true;
+        sharedState.envStartPermission = data.allow_start !== false;
+        sharedState.envStopPermission = data.allow_stop !== false;
+        sharedState.envRestartPermission = data.allow_restart !== false;
+        sharedState.envDeletePermission = data.allow_delete !== false;
+      }
+    } catch (e) {
+      console.error('Failed to load auth config:', e);
+    }
+    sharedState.configLoaded = true;
+  }
 
   // Update Page Title
   const baseTitle = 'DockLog';
   document.title = to.meta.title ? `${to.meta.title} | ${baseTitle}` : baseTitle;
 
-  if (to.meta.requiresAuth && !token) {
+  if (sharedState.isAuthDisabled) {
+    if (to.path === '/login') {
+      next('/dashboard');
+    } else {
+      next();
+    }
+    return;
+  }
+
+  const token = secureStorage.getItem('token');
+  const claims = parseJwt(token);
+  const isAdmin = claims?.is_admin === true;
+  const isExpired = claims?.exp ? (claims.exp * 1000 < Date.now()) : false;
+
+  if (to.meta.requiresAuth && (!token || isExpired)) {
+    if (isExpired) {
+      secureStorage.removeItem('token');
+      secureStorage.removeItem('user');
+    }
     next('/login');
   } else if (to.meta.requiresAdmin && !isAdmin) {
     next('/dashboard');

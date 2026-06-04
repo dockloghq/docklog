@@ -9,6 +9,7 @@ services:
     environment:
       - DB_PATH=${DB_PATH:-/app/data/docklog.db}
       - SECRET_KEY=${SECRET_KEY:-secret-key-change-this}
+      - DISABLE_AUTH=${DISABLE_AUTH:-false}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./data:/app/data

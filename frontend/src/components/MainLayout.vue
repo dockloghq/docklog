@@ -154,10 +154,10 @@
           System Health
         </router-link>
 
-        <div class="menu-divider"></div>
+        <div class="menu-divider" v-if="!sharedState.isAuthDisabled"></div>
 
         <router-link
-          v-if="sharedState.currentUser?.is_admin"
+          v-if="!sharedState.isAuthDisabled && sharedState.currentUser?.is_admin"
           to="/admin"
           class="nav-link"
           :class="{ active: route.path === '/admin' }"
@@ -178,7 +178,7 @@
           Users
         </router-link>
         <router-link
-          v-if="sharedState.currentUser?.is_admin"
+          v-if="!sharedState.isAuthDisabled && sharedState.currentUser?.is_admin"
           to="/audit"
           class="nav-link"
           :class="{ active: route.path === '/audit' }"
@@ -197,10 +197,11 @@
 
         <div
           class="menu-divider"
-          v-if="sharedState.currentUser?.is_admin"
+          v-if="!sharedState.isAuthDisabled && sharedState.currentUser?.is_admin"
         ></div>
 
         <router-link
+          v-if="!sharedState.isAuthDisabled"
           to="/settings"
           class="nav-link"
           :class="{ active: route.path === '/settings' }"
@@ -221,7 +222,7 @@
         </router-link>
       </nav>
 
-      <div class="sidebar-profile">
+      <div class="sidebar-profile" v-if="!sharedState.isAuthDisabled">
         <div class="profile-card">
           <div class="p-avatar-circle">{{ userInitial }}</div>
           <div class="p-info">
@@ -375,7 +376,7 @@
       </header>
 
       <div :class="['layout-body', { 'no-padding': isLogPage }]">
-        <slot />
+        <slot v-if="!sharedState.forcePasswordChange" />
       </div>
     </div>
 
@@ -614,17 +615,9 @@ watch(
   },
 );
 
-onMounted(async () => {
-  window.addEventListener("click", handleGlobalClick);
-  const session = await fetchCurrentUser();
-  if (session.status === "forbidden") {
-    router.replace("/login");
-    return;
-  }
-  sharedState.forcePasswordChange =
-    sharedState.currentUser?.password_changed === false;
-  sharedState.showPasswordModal =
-    sharedState.currentUser?.password_changed === false;
+const initializeLayoutData = async () => {
+  if (sharedState.forcePasswordChange) return;
+
   await fetchSystemStats();
   
   const connectSysStats = () => {
@@ -649,13 +642,31 @@ onMounted(async () => {
 
   connectSysStats();
 
+  if (userInterval) clearInterval(userInterval);
   userInterval = setInterval(async () => {
     const current = await fetchCurrentUser();
-    if (current.status === "forbidden") {
+    if (current.status === "forbidden" && !sharedState.isAuthDisabled) {
       clearInterval(userInterval);
       router.replace("/login");
     }
   }, 2000);
+};
+
+onMounted(async () => {
+  window.addEventListener("click", handleGlobalClick);
+  const session = await fetchCurrentUser();
+  if (session.status === "forbidden" && !sharedState.isAuthDisabled) {
+    router.replace("/login");
+    return;
+  }
+  sharedState.forcePasswordChange =
+    !sharedState.isAuthDisabled && sharedState.currentUser?.password_changed === false;
+  sharedState.showPasswordModal =
+    !sharedState.isAuthDisabled && sharedState.currentUser?.password_changed === false;
+
+  if (!sharedState.forcePasswordChange) {
+    initializeLayoutData();
+  }
 
   window.addEventListener("online", handleOnline);
   window.addEventListener("offline", handleOffline);
@@ -681,6 +692,18 @@ watch(
       sharedState.showPasswordModal = true;
     }
   },
+);
+
+watch(
+  () => sharedState.forcePasswordChange,
+  (forced) => {
+    if (!forced) {
+      initializeLayoutData();
+    } else {
+      if (statsInterval) clearInterval(statsInterval);
+      if (userInterval) clearInterval(userInterval);
+    }
+  }
 );
 
 onUnmounted(() => {

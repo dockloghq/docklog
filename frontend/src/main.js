@@ -23,7 +23,13 @@ if (!window.__docklogFetchPatched) {
   window.fetch = async (...args) => {
     const response = await originalFetch(...args);
 
-    if (response?.status === 403) {
+    if (response?.status === 401) {
+      const requestUrl = typeof args[0] === 'string' ? args[0] : (args[0] && (args[0].url || args[0].href || String(args[0])));
+      const isLoginRequest = typeof requestUrl === 'string' && requestUrl.includes('/api/token');
+      if (!isLoginRequest) {
+        forceLogout();
+      }
+    } else if (response?.status === 403) {
       try {
         const contentType = response.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {

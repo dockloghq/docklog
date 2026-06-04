@@ -198,8 +198,13 @@ DockLog is built for the entire team.
 
 ## Environment Variables
 
-| Variable      | Description          | Default                       |
+| Variable       | Description          | Default                       |
 | ------------- | -------------------- | ----------------------------- |
+| `DISABLE_AUTH`| Disable authentication (runs in No-Auth mode using `:memory:`) | `false` |
+| `ALLOW_START` | Enable starting containers in No-Auth mode   | `true`                        |
+| `ALLOW_STOP`  | Enable stopping containers in No-Auth mode   | `true`                        |
+| `ALLOW_RESTART`| Enable restarting containers in No-Auth mode | `true`                        |
+| `ALLOW_DELETE` | Enable deleting containers in No-Auth mode   | `true`                        |
 | `PORT`        | Application port     | `8000`                        |
 | `SECRET_KEY`  | JWT signing secret   | `secret-key-change-this`      |
 | `DB_PATH`     | SQLite database path | `docklog.db`                  |
@@ -256,6 +261,7 @@ Users only see containers matching their assigned rules.
 
 # 🐳 Docker Compose
 
+### Option A: Normal Auth Mode (Default)
 ```yaml
 version: "3.8"
 
@@ -263,18 +269,32 @@ services:
   docklog:
     image: aimldev/docklog:latest
     container_name: docklog
-
     ports:
       - "8888:8000"
-
     environment:
       - SECRET_KEY=your-secure-key-here
       - DB_PATH=/app/data/docklog.db
-
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./data:/app/data
+    restart: unless-stopped
+```
 
+### Option B: No-Auth Mode
+Bypasses the login screen and user database entirely, giving you immediate dashboard access:
+```yaml
+version: "3.8"
+
+services:
+  docklog:
+    image: aimldev/docklog:latest
+    container_name: docklog
+    ports:
+      - "8888:8000"
+    environment:
+      - DISABLE_AUTH=true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
 ```
 
@@ -294,6 +314,7 @@ http://localhost:8888
 
 # 🐳 Direct Docker Run
 
+### Option A: Normal Auth Mode (Default)
 ```bash
 docker run -d \
   --name docklog \
@@ -302,6 +323,17 @@ docker run -d \
   -v $(pwd)/data:/app/data \
   -e SECRET_KEY=your-secure-key-here \
   -e DB_PATH=/app/data/docklog.db \
+  --restart unless-stopped \
+  aimldev/docklog:latest
+```
+
+### Option B: No-Auth Mode
+```bash
+docker run -d \
+  --name docklog \
+  -p 8888:8000 \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -e DISABLE_AUTH=true \
   --restart unless-stopped \
   aimldev/docklog:latest
 ```

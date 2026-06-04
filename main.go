@@ -34,6 +34,11 @@ var (
 	upgrader   = websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool { return true },
 	}
+	AuthDisabled bool
+	CanStart     bool
+	CanStop      bool
+	CanRestart   bool
+	CanDelete    bool
 )
 
 type Container struct {
@@ -139,10 +144,29 @@ func getAuthorizedPatterns(userID int) []string {
 }
 
 func main() {
+	AuthDisabled = os.Getenv("DISABLE_AUTH") == "true" || os.Getenv("NO_AUTH") == "true"
+
+	getEnvBool := func(key string, defaultVal bool) bool {
+		val := os.Getenv(key)
+		if val == "" {
+			return defaultVal
+		}
+		return val == "true"
+	}
+
+	CanStart = getEnvBool("ALLOW_START", true)
+	CanStop = getEnvBool("ALLOW_STOP", true)
+	CanRestart = getEnvBool("ALLOW_RESTART", true)
+	CanDelete = getEnvBool("ALLOW_DELETE", true)
+
 	// DB Init
 	dbPath := os.Getenv("DB_PATH")
 	if dbPath == "" {
-		dbPath = "docklog.db"
+		if AuthDisabled {
+			dbPath = ":memory:"
+		} else {
+			dbPath = "docklog.db"
+		}
 	}
 	if err := db.InitDB(dbPath); err != nil {
 		log.Fatalf("Failed to init DB: %v", err)
@@ -214,18 +238,57 @@ func main() {
 		})
 	})
 
+	// Public configuration route
+	e.GET("/api/config", func(c echo.Context) error {
+		return c.JSON(http.StatusOK, map[string]interface{}{
+			"auth_disabled": AuthDisabled,
+			"allow_start":   CanStart,
+			"allow_stop":    CanStop,
+			"allow_restart": CanRestart,
+			"allow_delete":  CanDelete,
+		})
+	})
+
 	// Restricted Group
 	r := e.Group("/api")
-	r.Use(echojwt.WithConfig(echojwt.Config{
-		NewClaimsFunc: func(c echo.Context) jwt.Claims {
-			return new(UserClaims)
-		},
-		SigningKey: SECRET_KEY,
-	}))
+	if AuthDisabled {
+		r.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+			return func(c echo.Context) error {
+				// Populate context claims when auth is disabled
+				claims := &UserClaims{
+					ID:                 1,
+					Username:           "admin",
+					IsAdmin:            true,
+					IsRestrictedAccess: false,
+					CanStart:           true,
+					CanStop:            true,
+					CanRestart:         true,
+					CanDelete:          true,
+					IsActive:           true,
+				}
+				token := &jwt.Token{
+					Claims: claims,
+					Valid:  true,
+				}
+				c.Set("user", token)
+				return next(c)
+			}
+		})
+	} else {
+		r.Use(echojwt.WithConfig(echojwt.Config{
+			NewClaimsFunc: func(c echo.Context) jwt.Claims {
+				return new(UserClaims)
+			},
+			SigningKey: SECRET_KEY,
+		}))
+	}
 
 	// Password change enforcement middleware
 	r.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
+			if AuthDisabled {
+				return next(c)
+			}
 			token := c.Get("user").(*jwt.Token)
 			claims := token.Claims.(*UserClaims)
 
@@ -358,17 +421,32 @@ func main() {
 		// 1. Check Action-Specific Global Permission
 		var can bool
 		var err error
-		switch action {
-		case "start":
-			err = db.DB.QueryRow("SELECT (is_admin OR can_start) FROM users WHERE id = ?", userClaims.ID).Scan(&can)
-		case "stop":
-			err = db.DB.QueryRow("SELECT (is_admin OR can_stop) FROM users WHERE id = ?", userClaims.ID).Scan(&can)
-		case "restart":
-			err = db.DB.QueryRow("SELECT (is_admin OR can_restart) FROM users WHERE id = ?", userClaims.ID).Scan(&can)
-		case "remove":
-			err = db.DB.QueryRow("SELECT (is_admin OR can_delete) FROM users WHERE id = ?", userClaims.ID).Scan(&can)
-		default:
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid action specified."})
+		if AuthDisabled {
+			switch action {
+			case "start":
+				can = CanStart
+			case "stop":
+				can = CanStop
+			case "restart":
+				can = CanRestart
+			case "remove":
+				can = CanDelete
+			default:
+				return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid action specified."})
+			}
+		} else {
+			switch action {
+			case "start":
+				err = db.DB.QueryRow("SELECT (is_admin OR can_start) FROM users WHERE id = ?", userClaims.ID).Scan(&can)
+			case "stop":
+				err = db.DB.QueryRow("SELECT (is_admin OR can_stop) FROM users WHERE id = ?", userClaims.ID).Scan(&can)
+			case "restart":
+				err = db.DB.QueryRow("SELECT (is_admin OR can_restart) FROM users WHERE id = ?", userClaims.ID).Scan(&can)
+			case "remove":
+				err = db.DB.QueryRow("SELECT (is_admin OR can_delete) FROM users WHERE id = ?", userClaims.ID).Scan(&can)
+			default:
+				return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid action specified."})
+			}
 		}
 
 		if err != nil || !can {
@@ -1079,15 +1157,17 @@ func main() {
 	})
 
 	e.GET("/ws/system-stats", func(c echo.Context) error {
-		tokenStr := c.QueryParam("token")
-		if tokenStr == "" {
-			return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Missing token"})
-		}
-		token, err := jwt.ParseWithClaims(tokenStr, &UserClaims{}, func(token *jwt.Token) (interface{}, error) {
-			return SECRET_KEY, nil
-		})
-		if err != nil || !token.Valid {
-			return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid token"})
+		if !AuthDisabled {
+			tokenStr := c.QueryParam("token")
+			if tokenStr == "" {
+				return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Missing token"})
+			}
+			token, err := jwt.ParseWithClaims(tokenStr, &UserClaims{}, func(token *jwt.Token) (interface{}, error) {
+				return SECRET_KEY, nil
+			})
+			if err != nil || !token.Valid {
+				return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid token"})
+			}
 		}
 
 		ws, err := upgrader.Upgrade(c.Response(), c.Request(), nil)
@@ -1121,19 +1201,25 @@ func main() {
 		id := c.Param("id")
 		tokenStr := c.QueryParam("token")
 
-		if tokenStr == "" {
-			return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Authentication token required"})
+		var userClaims *UserClaims
+		if AuthDisabled {
+			userClaims = &UserClaims{
+				IsAdmin: true,
+			}
+		} else {
+			if tokenStr == "" {
+				return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Authentication token required"})
+			}
+
+			token, err := jwt.ParseWithClaims(tokenStr, &UserClaims{}, func(token *jwt.Token) (interface{}, error) {
+				return SECRET_KEY, nil
+			})
+
+			if err != nil || !token.Valid {
+				return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid token"})
+			}
+			userClaims = token.Claims.(*UserClaims)
 		}
-
-		token, err := jwt.ParseWithClaims(tokenStr, &UserClaims{}, func(token *jwt.Token) (interface{}, error) {
-			return SECRET_KEY, nil
-		})
-
-		if err != nil || !token.Valid {
-			return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid token"})
-		}
-
-		userClaims := token.Claims.(*UserClaims)
 
 		// Regex Access Check
 		if !userClaims.IsAdmin {

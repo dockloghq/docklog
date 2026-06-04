@@ -16,7 +16,12 @@ export const sharedState = reactive({
     message: '',
     type: 'success'
   },
-  isBackendDisconnected: false,
+  isAuthDisabled: false,
+  configLoaded: false,
+  envStartPermission: true,
+  envStopPermission: true,
+  envRestartPermission: true,
+  envDeletePermission: true,
 });
 
 export const showToast = (title, message, type = 'success') => {
@@ -30,6 +35,19 @@ export const showToast = (title, message, type = 'success') => {
 };
 
 export const fetchCurrentUser = async () => {
+  if (sharedState.isAuthDisabled) {
+    sharedState.currentUser = {
+      id: 1,
+      username: "admin",
+      is_admin: true,
+      can_start: sharedState.envStartPermission,
+      can_stop: sharedState.envStopPermission,
+      can_restart: sharedState.envRestartPermission,
+      can_delete: sharedState.envDeletePermission,
+      is_active: true
+    };
+    return { status: 'ok', user: sharedState.currentUser };
+  }
   const token = secureStorage.getItem('token');
   if (!token) return { status: 'missing', user: null };
   try {
