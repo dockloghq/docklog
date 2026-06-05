@@ -1421,7 +1421,7 @@ func collectStats(cli *client.Client) {
 				CPUUsage struct {
 					TotalUsage uint64 `json:"total_usage"`
 				} `json:"cpu_usage"`
-				SystemUsage uint64 `json:"system_usage"`
+				SystemUsage uint64 `json:"system_cpu_usage"`
 				OnlineCPUs  uint32 `json:"online_cpus"`
 			} `json:"cpu_stats"`
 			MemoryStats struct {
