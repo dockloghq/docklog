@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -233,7 +232,7 @@ func main() {
 			return c.JSON(http.StatusTooManyRequests, map[string]string{"error": "Too many login attempts. Try again later."})
 		}
 
-		username := c.FormValue("username")
+		username := strings.TrimSpace(c.FormValue("username"))
 		password := c.FormValue("password")
 
 		var id int
@@ -1784,20 +1783,8 @@ func seedAdmin() {
 	var count int
 	db.DB.QueryRow("SELECT COUNT(*) FROM users WHERE username = 'admin'").Scan(&count)
 	if count == 0 {
-		plain := os.Getenv("ADMIN_PASSWORD")
-		switch {
-		case plain != "":
-			if !isPasswordStrongEnough(plain) {
-				log.Fatalf("ADMIN_PASSWORD must be at least %d characters", minPasswordLength)
-			}
-			log.Println("Default admin account created (username: admin). Change the password on first login.")
-		case isProduction():
-			plain = generateRandomPassword(16)
-			log.Printf("Default admin account created (username: admin, password: %s). Change after first login.", plain)
-		default:
-			plain = "admin123"
-			log.Println("Default admin account created (username: admin, password: admin123). Change the password on first login.")
-		}
+		const plain = "admin123"
+		log.Println("Default admin account created (username: admin, password: admin123). Change the password on first login.")
 
 		h, err := bcrypt.GenerateFromPassword([]byte(plain), bcrypt.DefaultCost)
 		if err != nil {
@@ -1805,16 +1792,4 @@ func seedAdmin() {
 		}
 		db.DB.Exec("INSERT INTO users (username, password, is_admin, password_changed) VALUES (?, ?, ?, ?)", "admin", string(h), true, false)
 	}
-}
-
-func generateRandomPassword(length int) string {
-	const alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-	b := make([]byte, length)
-	if _, err := rand.Read(b); err != nil {
-		log.Fatalf("Failed to generate random admin password: %v", err)
-	}
-	for i := range b {
-		b[i] = alphabet[int(b[i])%len(alphabet)]
-	}
-	return string(b)
 }

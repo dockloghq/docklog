@@ -76,7 +76,7 @@ const handleLogin = async () => {
 
   try {
     const formData = new FormData();
-    formData.append("username", username.value);
+    formData.append("username", username.value.trim());
     formData.append("password", password.value);
 
     const res = await apiFetch("/api/token", {
@@ -91,7 +91,19 @@ const handleLogin = async () => {
       sharedState.showPasswordModal = data.password_changed === false;
       router.push("/dashboard");
     } else {
-      error.value = "Invalid credentials";
+      let message = "Invalid credentials";
+      try {
+        const data = await res.json();
+        if (data?.error) {
+          message = data.error;
+        }
+      } catch {
+        // keep default message
+      }
+      if (res.status === 429) {
+        message = "Too many login attempts. Try again in 15 minutes.";
+      }
+      error.value = message;
     }
   } catch (err) {
     error.value = "System connection failed";

@@ -171,7 +171,6 @@ See [Security & RBAC](docs/SECURITY.md) for details.
 | `CLIENT_ACCESS` | Restrict `/api` and `/ws` to web UI + native clients (`strict` or `off`) | `strict` |
 | `ALLOWED_ORIGINS` | Extra browser origins for the Vue UI (comma-separated URLs) | _(empty)_ |
 | `TRUST_PROXY` | Honor `X-Forwarded-*` headers when behind a reverse proxy | `false` |
-| `ADMIN_PASSWORD` | Initial admin password (min 8 chars); random in production if unset | _(empty)_ |
 | `ENV` | Set to `production` to disable localhost origin bypass | _(empty)_ |
 | `ALLOW_START` | Allow start action (no-auth mode env flags) | `false` |
 | `ALLOW_STOP` | Allow stop action | `false` |
@@ -188,7 +187,7 @@ See [Security & RBAC](docs/SECURITY.md) for details.
 2. Set `ENV=production` (or `GO_ENV=production`).
 3. Keep `CLIENT_ACCESS=strict`.
 4. Run behind Nginx, Traefik, or Caddy with HTTPS and set `TRUST_PROXY=true`.
-5. Note the random admin password from startup logs (or set `ADMIN_PASSWORD`) and change it on first login.
+5. Change the default `admin` / `admin123` password on first login.
 6. Restrict network access to trusted users only (Docker socket access is high privilege).
 
 ### Client access

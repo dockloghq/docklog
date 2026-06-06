@@ -60,6 +60,21 @@ func TestWebClientAllowedListedOrigin(t *testing.T) {
 	}
 }
 
+func TestWebClientAllowedHostOnlyOriginEntry(t *testing.T) {
+	resetClientAccessState()
+	allowedOrigins = []string{"docklog.example.com"}
+	os.Setenv("ENV", "production")
+	defer os.Unsetenv("ENV")
+
+	req := newTestRequest("POST", "http://docklog.example.com/api/token", map[string]string{
+		headerDockLogClient: clientHeaderWeb,
+		"Origin":            "https://docklog.example.com",
+	})
+	if !isClientAccessAllowed(req) {
+		t.Fatal("expected host-only ALLOWED_ORIGINS entry to match HTTPS origin")
+	}
+}
+
 func TestWebClientAllowedViaReverseProxyHost(t *testing.T) {
 	resetClientAccessState()
 	TrustProxy = true
@@ -71,6 +86,20 @@ func TestWebClientAllowedViaReverseProxyHost(t *testing.T) {
 	})
 	if !originMatchesAllowed("https://docklog.example.com", req) {
 		t.Fatal("expected reverse-proxy forwarded host to match configured origin")
+	}
+}
+
+func TestWebClientAllowedWhenOriginHostMatchesWithoutTrustProxy(t *testing.T) {
+	resetClientAccessState()
+	os.Setenv("ENV", "production")
+	defer os.Unsetenv("ENV")
+
+	req := newTestRequest("POST", "http://docklog.example.com/api/token", map[string]string{
+		headerDockLogClient: clientHeaderWeb,
+		"Origin":            "https://docklog.example.com",
+	})
+	if !isClientAccessAllowed(req) {
+		t.Fatal("expected HTTPS origin to match when Host header matches without TRUST_PROXY")
 	}
 }
 
@@ -89,14 +118,33 @@ func TestForwardHeadersIgnoredWithoutTrustProxy(t *testing.T) {
 	}
 }
 
-func TestSecFetchSiteWithoutOriginBlocked(t *testing.T) {
+func TestSecFetchSiteSameOriginAllowedForConfiguredHost(t *testing.T) {
 	resetClientAccessState()
+	allowedOrigins = []string{"docklog.example.com"}
+	os.Setenv("ENV", "production")
+	defer os.Unsetenv("ENV")
+
+	req := newTestRequest("POST", "http://docklog.example.com/api/token", map[string]string{
+		headerDockLogClient: clientHeaderWeb,
+		"Sec-Fetch-Site":    "same-origin",
+	})
+	if !isClientAccessAllowed(req) {
+		t.Fatal("expected same-origin web request when Host matches ALLOWED_ORIGINS")
+	}
+}
+
+func TestSecFetchSiteWithoutOriginBlockedWhenHostNotAllowed(t *testing.T) {
+	resetClientAccessState()
+	allowedOrigins = []string{"other.example.com"}
+	os.Setenv("ENV", "production")
+	defer os.Unsetenv("ENV")
+
 	req := newTestRequest("GET", "http://docklog.local/api/containers", map[string]string{
 		headerDockLogClient: clientHeaderWeb,
-		"Sec-Fetch-Site":      "same-origin",
+		"Sec-Fetch-Site":    "same-origin",
 	})
 	if isClientAccessAllowed(req) {
-		t.Fatal("expected Sec-Fetch-Site without Origin or Referer to be blocked")
+		t.Fatal("expected same-origin request to be blocked when Host not in ALLOWED_ORIGINS")
 	}
 }
 

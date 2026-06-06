@@ -140,7 +140,7 @@ func corsOriginAllowed(origin string) bool {
 		return false
 	}
 	for _, allowed := range allowedOrigins {
-		if origin == allowed {
+		if allowedOriginEntryMatches(origin, allowed) {
 			return true
 		}
 	}
@@ -153,12 +153,74 @@ func corsOriginAllowed(origin string) bool {
 	return false
 }
 
+func normalizeHost(host string) string {
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	return strings.ToLower(strings.Trim(host, "[]"))
+}
+
+func allowedOriginEntryMatches(origin string, allowed string) bool {
+	if origin == allowed {
+		return true
+	}
+	parsedOrigin, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	if strings.Contains(allowed, "://") {
+		parsedAllowed, err := url.Parse(allowed)
+		if err != nil {
+			return false
+		}
+		return normalizeHost(parsedOrigin.Host) == normalizeHost(parsedAllowed.Host)
+	}
+	return normalizeHost(parsedOrigin.Host) == normalizeHost(allowed)
+}
+
+func allowedRefererMatches(referer string, allowed string) bool {
+	if referer == allowed || strings.HasPrefix(referer, allowed+"/") {
+		return true
+	}
+	parsedReferer, err := url.Parse(referer)
+	if err != nil {
+		return false
+	}
+	if strings.Contains(allowed, "://") {
+		parsedAllowed, err := url.Parse(allowed)
+		if err != nil {
+			return false
+		}
+		return normalizeHost(parsedReferer.Host) == normalizeHost(parsedAllowed.Host)
+	}
+	return normalizeHost(parsedReferer.Host) == normalizeHost(allowed)
+}
+
+func originHostMatchesRequest(origin string, r *http.Request) bool {
+	parsed, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	return normalizeHost(parsed.Host) == normalizeHost(requestHost(r))
+}
+
+func refererHostMatchesRequest(referer string, r *http.Request) bool {
+	parsed, err := url.Parse(referer)
+	if err != nil {
+		return false
+	}
+	return normalizeHost(parsed.Host) == normalizeHost(requestHost(r))
+}
+
 func originMatchesAllowed(origin string, r *http.Request) bool {
 	if origin == sameOriginURL(r) {
 		return true
 	}
+	if originHostMatchesRequest(origin, r) {
+		return true
+	}
 	for _, allowed := range allowedOrigins {
-		if origin == allowed {
+		if allowedOriginEntryMatches(origin, allowed) {
 			return true
 		}
 	}
@@ -176,8 +238,11 @@ func refererMatchesAllowed(referer string, r *http.Request) bool {
 	if referer == sameOrigin || strings.HasPrefix(referer, sameOrigin+"/") {
 		return true
 	}
+	if refererHostMatchesRequest(referer, r) {
+		return true
+	}
 	for _, allowed := range allowedOrigins {
-		if referer == allowed || strings.HasPrefix(referer, allowed+"/") {
+		if allowedRefererMatches(referer, allowed) {
 			return true
 		}
 	}
@@ -190,14 +255,42 @@ func refererMatchesAllowed(referer string, r *http.Request) bool {
 	return false
 }
 
+func requestHostAllowed(r *http.Request) bool {
+	host := normalizeHost(requestHost(r))
+	if host == "" {
+		return false
+	}
+	if !isProduction() && isLocalhostHost(host) {
+		return true
+	}
+	for _, allowed := range allowedOrigins {
+		if strings.Contains(allowed, "://") {
+			parsed, err := url.Parse(allowed)
+			if err == nil && normalizeHost(parsed.Host) == host {
+				return true
+			}
+		} else if normalizeHost(allowed) == host {
+			return true
+		}
+	}
+	if len(allowedOrigins) == 0 {
+		return true
+	}
+	return false
+}
+
 func isWebOriginAllowed(r *http.Request) bool {
 	origin := r.Header.Get("Origin")
-	if origin != "" {
+	if origin != "" && origin != "null" {
 		return originMatchesAllowed(origin, r)
 	}
 	referer := r.Header.Get("Referer")
 	if referer != "" {
 		return refererMatchesAllowed(referer, r)
+	}
+	switch r.Header.Get("Sec-Fetch-Site") {
+	case "same-origin", "same-site":
+		return requestHostAllowed(r)
 	}
 	return false
 }
