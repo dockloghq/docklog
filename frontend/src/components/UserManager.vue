@@ -43,7 +43,12 @@
                     >RESTART</span
                   >
                   <span
-                    v-if="!u.can_start && !u.can_stop && !u.can_restart"
+                    v-if="envShellPermission && u.can_shell"
+                    class="badge badge-dim mini"
+                    >SHELL</span
+                  >
+                  <span
+                    v-if="!u.can_start && !u.can_stop && !u.can_restart && !(envShellPermission && u.can_shell)"
                     class="badge badge-dim mini"
                     >READ-ONLY</span
                   >
@@ -288,27 +293,25 @@
                 <label class="section-label-alt">Action Rights</label>
                 <div class="modern-rights-grid">
                   <label
-                    v-for="action in ['Start', 'Stop', 'Restart', 'Delete']"
-                    :key="action"
+                    v-for="action in actionRights"
+                    :key="action.key"
                     class="right-card"
                     :class="{
                       checked:
-                        activeUser[`can_${action.toLowerCase()}`] ||
-                        activeUser[`can${action}`],
+                        activeUser[action.field] ||
+                        activeUser[action.createField],
                     }"
                   >
                     <input
                       type="checkbox"
                       v-model="
                         activeUser[
-                          showCreateModal
-                            ? `can${action}`
-                            : `can_${action.toLowerCase()}`
+                          showCreateModal ? action.createField : action.field
                         ]
                       "
                     />
                     <div class="right-card-content">
-                      <span class="right-label">{{ action }}</span>
+                      <span class="right-label">{{ action.label }}</span>
                       <div class="custom-check"></div>
                     </div>
                   </label>
@@ -427,10 +430,30 @@
 <script setup>
 import { ref, computed, onMounted } from "vue";
 import { showToast } from "../utils/sharedState";
+import { sharedState } from "../utils/sharedState";
 import { apiFetch } from "../utils/apiFetch";
 
 const props = defineProps(["token"]);
 const emit = defineEmits(["update-count"]);
+
+const envShellPermission = computed(() => sharedState.envShellPermission === true);
+
+const baseActionRights = [
+  { key: "start", label: "Start", field: "can_start", createField: "canStart" },
+  { key: "stop", label: "Stop", field: "can_stop", createField: "canStop" },
+  { key: "restart", label: "Restart", field: "can_restart", createField: "canRestart" },
+  { key: "delete", label: "Delete", field: "can_delete", createField: "canDelete" },
+];
+
+const actionRights = computed(() => {
+  if (!envShellPermission.value) {
+    return baseActionRights;
+  }
+  return [
+    ...baseActionRights,
+    { key: "shell", label: "Shell", field: "can_shell", createField: "canShell" },
+  ];
+});
 
 const staffUsers = ref([]);
 const showCreateModal = ref(false);
@@ -448,6 +471,7 @@ const newUser = ref({
   canStop: true,
   canRestart: true,
   canDelete: false,
+  canShell: false,
 });
 const editingUser = ref({});
 const resetTargetUser = ref(null);
@@ -504,6 +528,7 @@ const createUser = async () => {
     formData.append("can_stop", newUser.value.canStop ? "true" : "false");
     formData.append("can_restart", newUser.value.canRestart ? "true" : "false");
     formData.append("can_delete", newUser.value.canDelete ? "true" : "false");
+    formData.append("can_shell", newUser.value.canShell ? "true" : "false");
     formData.append(
       "is_restricted_access",
       newUser.value.is_restricted ? "true" : "false",
@@ -531,6 +556,7 @@ const createUser = async () => {
         canStop: true,
         canRestart: true,
         canDelete: false,
+        canShell: false,
         is_restricted: false,
         allowed_containers: ".*",
       };
@@ -623,13 +649,14 @@ const confirmResetPassword = async () => {
 const updatePermissions = async () => {
   try {
     const formData = new FormData();
-    formData.append("can_start", editingUser.value.can_start);
-    formData.append("can_stop", editingUser.value.can_stop);
-    formData.append("can_restart", editingUser.value.can_restart);
-    formData.append("can_delete", editingUser.value.can_delete);
+    formData.append("can_start", editingUser.value.can_start ? "true" : "false");
+    formData.append("can_stop", editingUser.value.can_stop ? "true" : "false");
+    formData.append("can_restart", editingUser.value.can_restart ? "true" : "false");
+    formData.append("can_delete", editingUser.value.can_delete ? "true" : "false");
+    formData.append("can_shell", editingUser.value.can_shell ? "true" : "false");
     formData.append(
       "is_restricted_access",
-      editingUser.value.is_restricted_access,
+      editingUser.value.is_restricted_access ? "true" : "false",
     );
     formData.append("allowed_containers", editingUser.value.allowed_containers);
 

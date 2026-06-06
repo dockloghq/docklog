@@ -11,6 +11,7 @@ services:
       - ALLOW_SHELL=${ALLOW_SHELL:-false}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}
       - CLIENT_ACCESS=${CLIENT_ACCESS:-strict}
+      - TRUST_PROXY=${TRUST_PROXY:-false}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./data:/app/data

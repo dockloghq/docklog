@@ -184,8 +184,8 @@ const handlePasswordUpdate = async () => {
     error.value = "Passwords do not match";
     return;
   }
-  if (newPassword.value.length < 6) {
-    error.value = "Password must be at least 6 characters";
+  if (newPassword.value.length < 8) {
+    error.value = "Password must be at least 8 characters";
     return;
   }
   if (!currentPassword.value) {

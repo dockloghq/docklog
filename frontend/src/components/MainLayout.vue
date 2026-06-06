@@ -631,8 +631,8 @@ const openPasswordModal = () => {
 };
 
 const updatePassword = async () => {
-  if (newPassword.value.length < 6) {
-    passwordError.value = "Password must be at least 6 characters";
+  if (newPassword.value.length < 8) {
+    passwordError.value = "Password must be at least 8 characters";
     return;
   }
   if (newPassword.value !== confirmPassword.value) {

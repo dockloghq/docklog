@@ -51,3 +51,4 @@ Thumbs.db
 .env.example
 docs/FLUTTER.md
 docs/examples/
+docs/DESIGN.md

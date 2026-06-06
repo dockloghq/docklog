@@ -8,6 +8,7 @@ import (
 func resetClientAccessState() {
 	ClientAccessEnabled = true
 	allowedOrigins = []string{"https://docklog.example.com"}
+	TrustProxy = false
 }
 
 func TestWebClientAllowedSameOrigin(t *testing.T) {
@@ -61,6 +62,7 @@ func TestWebClientAllowedListedOrigin(t *testing.T) {
 
 func TestWebClientAllowedViaReverseProxyHost(t *testing.T) {
 	resetClientAccessState()
+	TrustProxy = true
 	req := newTestRequest("GET", "http://127.0.0.1:8000/api/containers", map[string]string{
 		headerDockLogClient: clientHeaderWeb,
 		"Origin":            "https://docklog.example.com",
@@ -69,6 +71,32 @@ func TestWebClientAllowedViaReverseProxyHost(t *testing.T) {
 	})
 	if !originMatchesAllowed("https://docklog.example.com", req) {
 		t.Fatal("expected reverse-proxy forwarded host to match configured origin")
+	}
+}
+
+func TestForwardHeadersIgnoredWithoutTrustProxy(t *testing.T) {
+	resetClientAccessState()
+	TrustProxy = false
+	req := newTestRequest("GET", "http://127.0.0.1:8000/api/containers", map[string]string{
+		"X-Forwarded-Host":  "docklog.example.com",
+		"X-Forwarded-Proto": "https",
+	})
+	if got := requestHost(req); got != "127.0.0.1:8000" {
+		t.Fatalf("expected requestHost to ignore forwarded host, got %q", got)
+	}
+	if got := requestScheme(req); got != "http" {
+		t.Fatalf("expected requestScheme to ignore forwarded proto, got %q", got)
+	}
+}
+
+func TestSecFetchSiteWithoutOriginBlocked(t *testing.T) {
+	resetClientAccessState()
+	req := newTestRequest("GET", "http://docklog.local/api/containers", map[string]string{
+		headerDockLogClient: clientHeaderWeb,
+		"Sec-Fetch-Site":      "same-origin",
+	})
+	if isClientAccessAllowed(req) {
+		t.Fatal("expected Sec-Fetch-Site without Origin or Referer to be blocked")
 	}
 }
 

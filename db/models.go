@@ -28,6 +28,7 @@ func InitDB(dataSourceName string) error {
 		can_stop BOOLEAN DEFAULT 0,
 		can_restart BOOLEAN DEFAULT 0,
 		can_delete BOOLEAN DEFAULT 0,
+		can_shell BOOLEAN DEFAULT 0,
 		is_restricted_access BOOLEAN DEFAULT 1,
 		allowed_containers TEXT DEFAULT '.*',
 		is_active BOOLEAN DEFAULT 1,
@@ -69,6 +70,11 @@ func InitDB(dataSourceName string) error {
 	_, migErr := DB.Exec("ALTER TABLE users ADD COLUMN password_version INTEGER DEFAULT 1")
 	if migErr != nil {
 		// Column likely already exists — safe to ignore
+		log.Printf("Migration note (safe to ignore): %v", migErr)
+	}
+
+	_, migErr = DB.Exec("ALTER TABLE users ADD COLUMN can_shell BOOLEAN DEFAULT 0")
+	if migErr != nil {
 		log.Printf("Migration note (safe to ignore): %v", migErr)
 	}
 

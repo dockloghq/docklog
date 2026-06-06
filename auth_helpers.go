@@ -31,11 +31,14 @@ var loginRateLimit loginRateLimiter
 var (
 	ClientAccessEnabled bool
 	allowedOrigins      []string
+	TrustProxy          bool
 )
 
 const (
-	clientHeaderWeb     = "web"
-	headerDockLogClient = "X-DockLog-Client"
+	clientHeaderWeb       = "web"
+	headerDockLogClient   = "X-DockLog-Client"
+	minPasswordLength     = 8
+	maxContainerPatternLen = 256
 )
 
 func initSecretKey() {
@@ -65,9 +68,13 @@ func initClientAccess() {
 	mode := strings.ToLower(strings.TrimSpace(os.Getenv("CLIENT_ACCESS")))
 	ClientAccessEnabled = !AuthDisabled && mode != "off"
 	allowedOrigins = parseCSVEnv(os.Getenv("ALLOWED_ORIGINS"))
+	TrustProxy = os.Getenv("TRUST_PROXY") == "true"
 
 	if ClientAccessEnabled {
 		log.Println("Client access: strict (Vue web UI origin validation; native mobile clients without browser Origin)")
+		if TrustProxy {
+			log.Println("TRUST_PROXY enabled: honoring X-Forwarded-Host / X-Forwarded-Proto for origin checks")
+		}
 	}
 }
 
@@ -91,6 +98,10 @@ func isProduction() bool {
 	return env == "production" || goEnv == "production"
 }
 
+func isPasswordStrongEnough(password string) bool {
+	return len(password) >= minPasswordLength
+}
+
 func isLocalhostHost(host string) bool {
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
@@ -100,18 +111,22 @@ func isLocalhostHost(host string) bool {
 }
 
 func requestHost(r *http.Request) string {
-	if host := r.Header.Get("X-Forwarded-Host"); host != "" {
-		return strings.TrimSpace(strings.Split(host, ",")[0])
+	if TrustProxy {
+		if host := r.Header.Get("X-Forwarded-Host"); host != "" {
+			return strings.TrimSpace(strings.Split(host, ",")[0])
+		}
 	}
 	return r.Host
 }
 
 func requestScheme(r *http.Request) string {
+	if TrustProxy {
+		if proto := r.Header.Get("X-Forwarded-Proto"); proto != "" {
+			return strings.TrimSpace(strings.Split(proto, ",")[0])
+		}
+	}
 	if r.TLS != nil {
 		return "https"
-	}
-	if proto := r.Header.Get("X-Forwarded-Proto"); proto != "" {
-		return strings.TrimSpace(strings.Split(proto, ",")[0])
 	}
 	return "http"
 }
@@ -183,10 +198,6 @@ func isWebOriginAllowed(r *http.Request) bool {
 	referer := r.Header.Get("Referer")
 	if referer != "" {
 		return refererMatchesAllowed(referer, r)
-	}
-	switch r.Header.Get("Sec-Fetch-Site") {
-	case "same-origin", "same-site":
-		return true
 	}
 	return false
 }
@@ -371,15 +382,24 @@ func refreshClaimsFromDB(claims *UserClaims) error {
 	return nil
 }
 
-func validateUserToken(tokenStr string) (*UserClaims, error) {
+func parseUserToken(tokenStr string) (*UserClaims, error) {
 	token, err := jwt.ParseWithClaims(tokenStr, &UserClaims{}, func(token *jwt.Token) (interface{}, error) {
+		if token.Method != jwt.SigningMethodHS256 {
+			return nil, fmt.Errorf("invalid signing method")
+		}
 		return SECRET_KEY, nil
 	})
 	if err != nil || !token.Valid {
 		return nil, fmt.Errorf("invalid token")
 	}
+	return token.Claims.(*UserClaims), nil
+}
 
-	claims := token.Claims.(*UserClaims)
+func validateUserToken(tokenStr string) (*UserClaims, error) {
+	claims, err := parseUserToken(tokenStr)
+	if err != nil {
+		return nil, err
+	}
 	if err := refreshClaimsFromDB(claims); err != nil {
 		return nil, err
 	}
@@ -433,4 +453,21 @@ func wsAuthError(c echo.Context, err error) error {
 		msg = "Password change required"
 	}
 	return c.JSON(http.StatusUnauthorized, map[string]string{"error": msg})
+}
+
+func securityHeadersMiddleware() echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			h := c.Response().Header()
+			h.Set("X-Content-Type-Options", "nosniff")
+			h.Set("X-Frame-Options", "DENY")
+			h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
+			h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+			h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+			if c.Scheme() == "https" {
+				h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+			}
+			return next(c)
+		}
+	}
 }

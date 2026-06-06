@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -64,6 +66,7 @@ type UserClaims struct {
 	CanStop            bool   `json:"can_stop"`
 	CanRestart         bool   `json:"can_restart"`
 	CanDelete          bool   `json:"can_delete"`
+	CanShell           bool   `json:"can_shell"`
 	AllowedContainers  string `json:"allowed_containers"`
 	IsActive           bool   `json:"is_active"`
 	PasswordVersion    int    `json:"password_version"`
@@ -79,6 +82,7 @@ type User struct {
 	CanStop            bool   `json:"can_stop"`
 	CanRestart         bool   `json:"can_restart"`
 	CanDelete          bool   `json:"can_delete"`
+	CanShell           bool   `json:"can_shell"`
 	IsRestrictedAccess bool   `json:"is_restricted_access"`
 	AllowedContainers  string `json:"allowed_containers"`
 	IsActive           bool   `json:"is_active"`
@@ -110,7 +114,6 @@ func getAuthorizedPatterns(userID int) []string {
 		return []string{""}
 	}
 
-	// Support multiple patterns separated by comma
 	rawPatterns := strings.Split(pattern, ",")
 	var finalPatterns []string
 	for _, p := range rawPatterns {
@@ -119,19 +122,14 @@ func getAuthorizedPatterns(userID int) []string {
 			continue
 		}
 
-		// If it's already a regex anchor, assume it's a full regex
 		if strings.HasPrefix(p, "^") || strings.HasSuffix(p, "$") {
-			finalPatterns = append(finalPatterns, p)
+			finalPatterns = appendValidatedPattern(finalPatterns, p)
 			continue
 		}
 
-		// Otherwise, treat as a simple string with wildcard support
-		// Convert glob * to regex .*
 		regP := strings.ReplaceAll(p, "*", ".*")
-		// Clean up potential double stars
 		regP = strings.ReplaceAll(regP, "..*", ".*")
 
-		// Anchor the pattern to ensure exact matches for simple strings
 		if !strings.ContainsAny(regP, "()[]{}|") {
 			if !strings.HasPrefix(regP, "^") {
 				regP = "^" + regP
@@ -140,9 +138,21 @@ func getAuthorizedPatterns(userID int) []string {
 				regP = regP + "$"
 			}
 		}
-		finalPatterns = append(finalPatterns, regP)
+		finalPatterns = appendValidatedPattern(finalPatterns, regP)
 	}
 	return finalPatterns
+}
+
+func appendValidatedPattern(patterns []string, regP string) []string {
+	if len(regP) > maxContainerPatternLen {
+		log.Printf("Skipping container pattern: exceeds %d characters", maxContainerPatternLen)
+		return patterns
+	}
+	if _, err := regexp.Compile(regP); err != nil {
+		log.Printf("Skipping invalid container pattern: %v", err)
+		return patterns
+	}
+	return append(patterns, regP)
 }
 
 func main() {
@@ -163,7 +173,7 @@ func main() {
 	CanStop = getEnvBool("ALLOW_STOP", false)
 	CanRestart = getEnvBool("ALLOW_RESTART", false)
 	CanDelete = getEnvBool("ALLOW_DELETE", false)
-	AllowShell = getEnvBool("ALLOW_SHELL", false)
+	AllowShell = getEnvBool("ALLOW_SHELL", false) || getEnvBool("ALLOW_BASH", false)
 
 	// DB Init
 	dbPath := os.Getenv("DB_PATH")
@@ -182,8 +192,12 @@ func main() {
 	seedAdmin()
 
 	e := echo.New()
+	if TrustProxy {
+		e.IPExtractor = echo.ExtractIPFromXFFHeader()
+	}
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
+	e.Use(securityHeadersMiddleware())
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
 		AllowOriginFunc: func(origin string) (bool, error) {
 			return corsOriginAllowed(origin), nil
@@ -224,11 +238,11 @@ func main() {
 
 		var id int
 		var hashedPassword string
-		var isAdmin, passwordChanged, canStart, canStop, canRestart, canDelete, isRestricted, isActive bool
+		var isAdmin, passwordChanged, canStart, canStop, canRestart, canDelete, canShell, isRestricted, isActive bool
 		var allowedContainers string
 		var passwordVersion int
-		err := db.DB.QueryRow("SELECT id, password, is_admin, password_changed, can_start, can_stop, can_restart, can_delete, is_restricted_access, allowed_containers, is_active, COALESCE(password_version, 1) FROM users WHERE username = ?", username).Scan(
-			&id, &hashedPassword, &isAdmin, &passwordChanged, &canStart, &canStop, &canRestart, &canDelete, &isRestricted, &allowedContainers, &isActive, &passwordVersion,
+		err := db.DB.QueryRow("SELECT id, password, is_admin, password_changed, can_start, can_stop, can_restart, can_delete, can_shell, is_restricted_access, allowed_containers, is_active, COALESCE(password_version, 1) FROM users WHERE username = ?", username).Scan(
+			&id, &hashedPassword, &isAdmin, &passwordChanged, &canStart, &canStop, &canRestart, &canDelete, &canShell, &isRestricted, &allowedContainers, &isActive, &passwordVersion,
 		)
 		if err != nil || bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(password)) != nil {
 			loginRateLimit.recordFailure(ip)
@@ -250,6 +264,7 @@ func main() {
 			CanStop:            canStop,
 			CanRestart:         canRestart,
 			CanDelete:          canDelete,
+			CanShell:           canShell,
 			AllowedContainers:  allowedContainers,
 			IsActive:           isActive,
 			PasswordVersion:    passwordVersion,
@@ -1046,8 +1061,8 @@ func main() {
 		user := token.Claims.(*UserClaims)
 		newPassword := c.FormValue("password")
 
-		if len(newPassword) < 6 {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": "Password too short"})
+		if len(newPassword) < minPasswordLength {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("Password must be at least %d characters", minPasswordLength)})
 		}
 
 		var hashedPassword string
@@ -1081,8 +1096,8 @@ func main() {
 		token := c.Get("user").(*jwt.Token)
 		claims := token.Claims.(*UserClaims)
 		var dbUser User
-		err := db.DB.QueryRow("SELECT id, username, is_admin, password_changed, can_start, can_stop, can_restart, can_delete, is_restricted_access, allowed_containers, is_active FROM users WHERE id = ?", claims.ID).
-			Scan(&dbUser.ID, &dbUser.Username, &dbUser.IsAdmin, &dbUser.PasswordChanged, &dbUser.CanStart, &dbUser.CanStop, &dbUser.CanRestart, &dbUser.CanDelete, &dbUser.IsRestrictedAccess, &dbUser.AllowedContainers, &dbUser.IsActive)
+		err := db.DB.QueryRow("SELECT id, username, is_admin, password_changed, can_start, can_stop, can_restart, can_delete, can_shell, is_restricted_access, allowed_containers, is_active FROM users WHERE id = ?", claims.ID).
+			Scan(&dbUser.ID, &dbUser.Username, &dbUser.IsAdmin, &dbUser.PasswordChanged, &dbUser.CanStart, &dbUser.CanStop, &dbUser.CanRestart, &dbUser.CanDelete, &dbUser.CanShell, &dbUser.IsRestrictedAccess, &dbUser.AllowedContainers, &dbUser.IsActive)
 		if err != nil {
 			return c.JSON(http.StatusUnauthorized, map[string]string{"error": "User not found"})
 		}
@@ -1091,6 +1106,10 @@ func main() {
 				"error": "Account deactivated",
 				"code":  "ACCOUNT_DEACTIVATED",
 			})
+		}
+		// Admins: shell access is env-only (ALLOW_SHELL / ALLOW_BASH), not DB can_shell.
+		if dbUser.IsAdmin {
+			dbUser.CanShell = false
 		}
 		return c.JSON(http.StatusOK, dbUser)
 	})
@@ -1122,7 +1141,7 @@ func main() {
 		var total int
 		db.DB.QueryRow("SELECT COUNT(*) FROM users").Scan(&total)
 
-		rows, err := db.DB.Query("SELECT id, username, is_admin, can_start, can_stop, can_restart, can_delete, is_restricted_access, allowed_containers, is_active FROM users LIMIT ? OFFSET ?", limit, offset)
+		rows, err := db.DB.Query("SELECT id, username, is_admin, can_start, can_stop, can_restart, can_delete, can_shell, is_restricted_access, allowed_containers, is_active FROM users LIMIT ? OFFSET ?", limit, offset)
 		if err != nil {
 			log.Printf("Failed to query users: %v", err)
 			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to fetch users: " + err.Error()})
@@ -1132,8 +1151,8 @@ func main() {
 		for rows.Next() {
 			var id int
 			var username, allowedContainers string
-			var isAdmin, canStart, canStop, canRestart, canDelete, isRestricted, isActive bool
-			if err := rows.Scan(&id, &username, &isAdmin, &canStart, &canStop, &canRestart, &canDelete, &isRestricted, &allowedContainers, &isActive); err != nil {
+			var isAdmin, canStart, canStop, canRestart, canDelete, canShell, isRestricted, isActive bool
+			if err := rows.Scan(&id, &username, &isAdmin, &canStart, &canStop, &canRestart, &canDelete, &canShell, &isRestricted, &allowedContainers, &isActive); err != nil {
 				log.Printf("Failed to scan user row: %v", err)
 				continue
 			}
@@ -1145,6 +1164,7 @@ func main() {
 				"can_stop":             canStop,
 				"can_restart":          canRestart,
 				"can_delete":           canDelete,
+				"can_shell":            canShell,
 				"is_restricted_access": isRestricted,
 				"allowed_containers":   allowedContainers,
 				"is_active":            isActive,
@@ -1171,10 +1191,14 @@ func main() {
 	admin.POST("/users", func(c echo.Context) error {
 		username := c.FormValue("username")
 		password := c.FormValue("password")
+		if !isPasswordStrongEnough(password) {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("Password must be at least %d characters", minPasswordLength)})
+		}
 		canStart := c.FormValue("can_start") == "true"
 		canStop := c.FormValue("can_stop") == "true"
 		canRestart := c.FormValue("can_restart") == "true"
 		canDelete := c.FormValue("can_delete") == "true"
+		canShell := c.FormValue("can_shell") == "true"
 		isRestricted := c.FormValue("is_restricted_access") == "true"
 		allowedContainers := c.FormValue("allowed_containers")
 		if allowedContainers == "" {
@@ -1185,8 +1209,8 @@ func main() {
 		if err != nil {
 			return c.JSON(http.StatusBadRequest, map[string]string{"error": "Password is too long or invalid. Please use a shorter password."})
 		}
-		_, err = db.DB.Exec("INSERT INTO users (username, password, is_admin, can_start, can_stop, can_restart, can_delete, is_restricted_access, allowed_containers, password_changed, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-			username, string(h), false, canStart, canStop, canRestart, canDelete, isRestricted, allowedContainers, true, true)
+		_, err = db.DB.Exec("INSERT INTO users (username, password, is_admin, can_start, can_stop, can_restart, can_delete, can_shell, is_restricted_access, allowed_containers, password_changed, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			username, string(h), false, canStart, canStop, canRestart, canDelete, canShell, isRestricted, allowedContainers, true, true)
 		if err != nil {
 			return c.JSON(http.StatusBadRequest, map[string]string{"error": "User already exists"})
 		}
@@ -1199,10 +1223,11 @@ func main() {
 		canStop := c.FormValue("can_stop") == "true"
 		canRestart := c.FormValue("can_restart") == "true"
 		canDelete := c.FormValue("can_delete") == "true"
+		canShell := c.FormValue("can_shell") == "true"
 		isRestricted := c.FormValue("is_restricted_access") == "true"
 		allowedContainers := c.FormValue("allowed_containers")
 
-		_, err := db.DB.Exec("UPDATE users SET can_start = ?, can_stop = ?, can_restart = ?, can_delete = ?, is_restricted_access = ?, allowed_containers = ? WHERE id = ?", canStart, canStop, canRestart, canDelete, isRestricted, allowedContainers, id)
+		_, err := db.DB.Exec("UPDATE users SET can_start = ?, can_stop = ?, can_restart = ?, can_delete = ?, can_shell = ?, is_restricted_access = ?, allowed_containers = ? WHERE id = ?", canStart, canStop, canRestart, canDelete, canShell, isRestricted, allowedContainers, id)
 		if err != nil {
 			return err
 		}
@@ -1212,8 +1237,8 @@ func main() {
 	admin.PUT("/users/:id/password", func(c echo.Context) error {
 		id := c.Param("id")
 		newPassword := c.FormValue("password")
-		if newPassword == "" {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": "Password cannot be empty"})
+		if !isPasswordStrongEnough(newPassword) {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("Password must be at least %d characters", minPasswordLength)})
 		}
 
 		h, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
@@ -1445,6 +1470,16 @@ func main() {
 		if !AllowShell {
 			logAudit(userClaims.ID, userClaims.Username, "SHELL_SESSION", id, "Forbidden", "Shell access is disabled on this server")
 			return c.JSON(http.StatusForbidden, map[string]string{"error": "Shell access is disabled on this server."})
+		}
+
+		// Admins: env ALLOW_SHELL/ALLOW_BASH only. Staff: also require DB can_shell.
+		if !userClaims.IsAdmin {
+			var canShell bool
+			err := db.DB.QueryRow("SELECT can_shell FROM users WHERE id = ? AND is_active = 1", userClaims.ID).Scan(&canShell)
+			if err != nil || !canShell {
+				logAudit(userClaims.ID, userClaims.Username, "SHELL_SESSION", id, "Forbidden", "Shell access is not permitted for this account")
+				return c.JSON(http.StatusForbidden, map[string]string{"error": "Shell access is not permitted for this account."})
+			}
 		}
 
 		// Verify container exists and get its name
@@ -1749,11 +1784,37 @@ func seedAdmin() {
 	var count int
 	db.DB.QueryRow("SELECT COUNT(*) FROM users WHERE username = 'admin'").Scan(&count)
 	if count == 0 {
-		h, err := bcrypt.GenerateFromPassword([]byte("admin123"), bcrypt.DefaultCost)
+		plain := os.Getenv("ADMIN_PASSWORD")
+		switch {
+		case plain != "":
+			if !isPasswordStrongEnough(plain) {
+				log.Fatalf("ADMIN_PASSWORD must be at least %d characters", minPasswordLength)
+			}
+			log.Println("Default admin account created (username: admin). Change the password on first login.")
+		case isProduction():
+			plain = generateRandomPassword(16)
+			log.Printf("Default admin account created (username: admin, password: %s). Change after first login.", plain)
+		default:
+			plain = "admin123"
+			log.Println("Default admin account created (username: admin, password: admin123). Change the password on first login.")
+		}
+
+		h, err := bcrypt.GenerateFromPassword([]byte(plain), bcrypt.DefaultCost)
 		if err != nil {
 			log.Fatalf("Failed to hash default admin password: %v", err)
 		}
 		db.DB.Exec("INSERT INTO users (username, password, is_admin, password_changed) VALUES (?, ?, ?, ?)", "admin", string(h), true, false)
-		log.Println("Default admin account created (username: admin). Change the password on first login.")
 	}
+}
+
+func generateRandomPassword(length int) string {
+	const alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	b := make([]byte, length)
+	if _, err := rand.Read(b); err != nil {
+		log.Fatalf("Failed to generate random admin password: %v", err)
+	}
+	for i := range b {
+		b[i] = alphabet[int(b[i])%len(alphabet)]
+	}
+	return string(b)
 }

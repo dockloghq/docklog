@@ -77,6 +77,7 @@ router.beforeEach(async (to, from, next) => {
         sharedState.envStopPermission = data.allow_stop !== false;
         sharedState.envRestartPermission = data.allow_restart !== false;
         sharedState.envDeletePermission = data.allow_delete !== false;
+        sharedState.envShellPermission = data.allow_shell === true;
       }
     } catch (e) {
       console.error('Failed to load auth config:', e);

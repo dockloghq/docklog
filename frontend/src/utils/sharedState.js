@@ -57,6 +57,7 @@ export const sharedState = reactive({
   envStopPermission: true,
   envRestartPermission: true,
   envDeletePermission: true,
+  envShellPermission: false,
   isBackendDisconnected: false,
 });
 
