@@ -1531,6 +1531,13 @@ func main() {
 					errChan <- err
 					return
 				}
+
+				// Log command text to audit logs
+				cmdStr := strings.TrimSpace(string(msg))
+				if len(cmdStr) > 0 && cmdStr != "\u0003" { // Ignore empty commands and Ctrl+C ASCII 3
+					logAudit(userClaims.ID, userClaims.Username, "SHELL_COMMAND", containerName, "Success", "Executed command: "+cmdStr)
+				}
+
 				_, err = attachResult.Conn.Write(msg)
 				if err != nil {
 					errChan <- err
