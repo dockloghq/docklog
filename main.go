@@ -1488,24 +1488,25 @@ func main() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		// Create exec config - try /bin/bash first, then fallback to /bin/sh
+		shellCmd := c.QueryParam("shell")
+		if shellCmd == "" {
+			shellCmd = "/bin/sh"
+		}
+
+		// Create exec config
 		execConfig := client.ExecCreateOptions{
 			AttachStdin:  true,
 			AttachStdout: true,
 			AttachStderr: true,
 			TTY:          true,
-			Cmd:          []string{"/bin/bash"},
+			Cmd:          []string{shellCmd},
 		}
 
 		execResult, err := cli.ExecCreate(ctx, id, execConfig)
 		if err != nil {
-			execConfig.Cmd = []string{"/bin/sh"}
-			execResult, err = cli.ExecCreate(ctx, id, execConfig)
-			if err != nil {
-				logAudit(userClaims.ID, userClaims.Username, "SHELL_SESSION", containerName, "Error", "Failed to create exec instance: "+err.Error())
-				ws.WriteMessage(websocket.TextMessage, []byte("\r\n[DockLog] Failed to create terminal session: "+err.Error()+"\r\n"))
-				return nil
-			}
+			logAudit(userClaims.ID, userClaims.Username, "SHELL_SESSION", containerName, "Error", "Failed to create exec instance: "+err.Error())
+			ws.WriteMessage(websocket.TextMessage, []byte("\r\n[DockLog] Failed to create terminal session: "+err.Error()+"\r\n"))
+			return nil
 		}
 
 		// Attach exec
