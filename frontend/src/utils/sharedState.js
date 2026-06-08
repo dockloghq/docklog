@@ -53,10 +53,10 @@ export const sharedState = reactive({
   },
   isAuthDisabled: false,
   configLoaded: false,
-  envStartPermission: true,
-  envStopPermission: true,
-  envRestartPermission: true,
-  envDeletePermission: true,
+  envStartPermission: false,
+  envStopPermission: false,
+  envRestartPermission: false,
+  envDeletePermission: false,
   envShellPermission: false,
   isBackendDisconnected: false,
 });
@@ -107,6 +107,7 @@ export const fetchCurrentUser = async () => {
       can_stop: sharedState.envStopPermission,
       can_restart: sharedState.envRestartPermission,
       can_delete: sharedState.envDeletePermission,
+      can_shell: sharedState.envShellPermission,
       is_active: true
     };
     return { status: 'ok', user: sharedState.currentUser };
@@ -167,6 +168,26 @@ const handleBackendError = () => {
     showToast("Server Unreachable", "Cannot connect to the backend server. Please check if it is running.", "error");
   }
 };
+
+export function userCanStart(user) {
+  return sharedState.envStartPermission && user?.can_start === true;
+}
+
+export function userCanStop(user) {
+  return sharedState.envStopPermission && user?.can_stop === true;
+}
+
+export function userCanRestart(user) {
+  return sharedState.envRestartPermission && user?.can_restart === true;
+}
+
+export function userCanDelete(user) {
+  return sharedState.envDeletePermission && user?.can_delete === true;
+}
+
+export function userCanShell(user) {
+  return sharedState.envShellPermission && user?.can_shell === true;
+}
 
 export function formatBytes(bytes) {
   if (bytes === 0) return '0B';

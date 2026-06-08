@@ -155,6 +155,10 @@ func appendValidatedPattern(patterns []string, regP string) []string {
 }
 
 func main() {
+	if maybeRunCLI() {
+		return
+	}
+
 	AuthDisabled = os.Getenv("DISABLE_AUTH") == "true" || os.Getenv("NO_AUTH") == "true"
 	initSecretKey()
 	initClientAccess()
@@ -534,40 +538,23 @@ func main() {
 		token := c.Get("user").(*jwt.Token)
 		userClaims := token.Claims.(*UserClaims)
 
-		// 1. Check Action-Specific Global Permission
-		var can bool
-		var err error
-		if AuthDisabled {
-			switch action {
-			case "start":
-				can = CanStart
-			case "stop":
-				can = CanStop
-			case "restart":
-				can = CanRestart
-			case "remove":
-				can = CanDelete
-			default:
-				return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid action specified."})
-			}
-		} else {
-			switch action {
-			case "start":
-				err = db.DB.QueryRow("SELECT (is_admin OR can_start) FROM users WHERE id = ?", userClaims.ID).Scan(&can)
-			case "stop":
-				err = db.DB.QueryRow("SELECT (is_admin OR can_stop) FROM users WHERE id = ?", userClaims.ID).Scan(&can)
-			case "restart":
-				err = db.DB.QueryRow("SELECT (is_admin OR can_restart) FROM users WHERE id = ?", userClaims.ID).Scan(&can)
-			case "remove":
-				err = db.DB.QueryRow("SELECT (is_admin OR can_delete) FROM users WHERE id = ?", userClaims.ID).Scan(&can)
-			default:
-				return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid action specified."})
-			}
+		if action != "start" && action != "stop" && action != "restart" && action != "remove" {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid action specified."})
 		}
 
-		if err != nil || !can {
-			logAudit(userClaims.ID, userClaims.Username, action, id, "Forbidden", "Permission Denied: Action level rights missing.")
-			return c.JSON(http.StatusForbidden, map[string]string{"error": "Permission Denied: You do not have rights to perform this action."})
+		if !containerActionEnvAllowed(action) {
+			detail := "This action is disabled on this server."
+			logAudit(userClaims.ID, userClaims.Username, action, id, "Forbidden", detail)
+			return c.JSON(http.StatusForbidden, map[string]string{"error": detail})
+		}
+
+		if !AuthDisabled {
+			can, err := staffHasContainerActionPermission(action, userClaims.ID)
+			if err != nil || !can {
+				detail := "This action is not permitted for this account."
+				logAudit(userClaims.ID, userClaims.Username, action, id, "Forbidden", detail)
+				return c.JSON(http.StatusForbidden, map[string]string{"error": detail})
+			}
 		}
 
 		// 2. Check Resource-Specific Regex Access (from DB, not JWT)
@@ -596,7 +583,7 @@ func main() {
 		}
 
 		ctx := context.Background()
-		timeout := 10
+		timeout := 60
 		switch action {
 		case "start":
 			_, err = cli.ContainerStart(ctx, id, client.ContainerStartOptions{})
@@ -964,11 +951,17 @@ func main() {
 		token := c.Get("user").(*jwt.Token)
 		userClaims := token.Claims.(*UserClaims)
 
+		container, err := cli.ContainerInspect(context.Background(), id, client.ContainerInspectOptions{})
+		if err != nil {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "Container not found"})
+		}
+
+		longID := container.Container.ID
+		if longID == "" {
+			longID = id
+		}
+
 		if !userClaims.IsAdmin {
-			container, err := cli.ContainerInspect(context.Background(), id, client.ContainerInspectOptions{})
-			if err != nil {
-				return c.NoContent(http.StatusNotFound)
-			}
 			containerName := strings.TrimPrefix(container.Container.Name, "/")
 
 			patterns := getAuthorizedPatterns(userClaims.ID)
@@ -990,7 +983,7 @@ func main() {
 
 		query := "SELECT cpu, memory, timestamp FROM stats WHERE container_id = ? "
 		var args []interface{}
-		args = append(args, id)
+		args = append(args, longID)
 
 		if from != "" && to != "" {
 			query += "AND timestamp BETWEEN ? AND ? "
@@ -1106,10 +1099,6 @@ func main() {
 				"code":  "ACCOUNT_DEACTIVATED",
 			})
 		}
-		// Admins: shell access is env-only (ALLOW_SHELL / ALLOW_BASH), not DB can_shell.
-		if dbUser.IsAdmin {
-			dbUser.CanShell = false
-		}
 		return c.JSON(http.StatusOK, dbUser)
 	})
 
@@ -1193,11 +1182,13 @@ func main() {
 		if !isPasswordStrongEnough(password) {
 			return c.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("Password must be at least %d characters", minPasswordLength)})
 		}
-		canStart := c.FormValue("can_start") == "true"
-		canStop := c.FormValue("can_stop") == "true"
-		canRestart := c.FormValue("can_restart") == "true"
-		canDelete := c.FormValue("can_delete") == "true"
-		canShell := c.FormValue("can_shell") == "true"
+		canStart, canStop, canRestart, canDelete, canShell := clampStaffActionPermissions(
+			c.FormValue("can_start") == "true",
+			c.FormValue("can_stop") == "true",
+			c.FormValue("can_restart") == "true",
+			c.FormValue("can_delete") == "true",
+			c.FormValue("can_shell") == "true",
+		)
 		isRestricted := c.FormValue("is_restricted_access") == "true"
 		allowedContainers := c.FormValue("allowed_containers")
 		if allowedContainers == "" {
@@ -1218,11 +1209,13 @@ func main() {
 
 	admin.PUT("/users/:id/permissions", func(c echo.Context) error {
 		id := c.Param("id")
-		canStart := c.FormValue("can_start") == "true"
-		canStop := c.FormValue("can_stop") == "true"
-		canRestart := c.FormValue("can_restart") == "true"
-		canDelete := c.FormValue("can_delete") == "true"
-		canShell := c.FormValue("can_shell") == "true"
+		canStart, canStop, canRestart, canDelete, canShell := clampStaffActionPermissions(
+			c.FormValue("can_start") == "true",
+			c.FormValue("can_stop") == "true",
+			c.FormValue("can_restart") == "true",
+			c.FormValue("can_delete") == "true",
+			c.FormValue("can_shell") == "true",
+		)
 		isRestricted := c.FormValue("is_restricted_access") == "true"
 		allowedContainers := c.FormValue("allowed_containers")
 
@@ -1467,24 +1460,18 @@ func main() {
 		}
 
 		if !AllowShell {
-			logAudit(userClaims.ID, userClaims.Username, "SHELL_SESSION", id, "Forbidden", "Shell access is disabled on this server")
 			return c.JSON(http.StatusForbidden, map[string]string{"error": "Shell access is disabled on this server."})
 		}
 
-		// Admins: env ALLOW_SHELL/ALLOW_BASH only. Staff: also require DB can_shell.
-		if !userClaims.IsAdmin {
-			var canShell bool
-			err := db.DB.QueryRow("SELECT can_shell FROM users WHERE id = ? AND is_active = 1", userClaims.ID).Scan(&canShell)
-			if err != nil || !canShell {
-				logAudit(userClaims.ID, userClaims.Username, "SHELL_SESSION", id, "Forbidden", "Shell access is not permitted for this account")
-				return c.JSON(http.StatusForbidden, map[string]string{"error": "Shell access is not permitted for this account."})
-			}
+		var canShell bool
+		err = db.DB.QueryRow("SELECT can_shell FROM users WHERE id = ? AND is_active = 1", userClaims.ID).Scan(&canShell)
+		if err != nil || !canShell {
+			return c.JSON(http.StatusForbidden, map[string]string{"error": "Shell access is not permitted for this account."})
 		}
 
 		// Verify container exists and get its name
 		container, err := cli.ContainerInspect(context.Background(), id, client.ContainerInspectOptions{})
 		if err != nil {
-			logAudit(userClaims.ID, userClaims.Username, "SHELL_SESSION", id, "Error", "Container not found: "+err.Error())
 			return c.NoContent(http.StatusNotFound)
 		}
 		containerName := strings.TrimPrefix(container.Container.Name, "/")
@@ -1500,7 +1487,6 @@ func main() {
 				}
 			}
 			if !authorized {
-				logAudit(userClaims.ID, userClaims.Username, "SHELL_SESSION", containerName, "Forbidden", "Access Denied: Regex mismatch")
 				return c.JSON(http.StatusForbidden, map[string]string{"error": "Access Denied: You do not have permission to view this resource."})
 			}
 		}
@@ -1533,7 +1519,6 @@ func main() {
 
 		execResult, err := cli.ExecCreate(ctx, id, execConfig)
 		if err != nil {
-			logAudit(userClaims.ID, userClaims.Username, "SHELL_SESSION", containerName, "Error", "Failed to create exec instance: "+err.Error())
 			ws.WriteMessage(websocket.TextMessage, []byte("\r\n[DockLog] Failed to create terminal session: "+err.Error()+"\r\n"))
 			return nil
 		}
@@ -1543,14 +1528,10 @@ func main() {
 			TTY: true,
 		})
 		if err != nil {
-			logAudit(userClaims.ID, userClaims.Username, "SHELL_SESSION", containerName, "Error", "Failed to attach exec instance: "+err.Error())
 			ws.WriteMessage(websocket.TextMessage, []byte("\r\n[DockLog] Failed to attach to terminal session: "+err.Error()+"\r\n"))
 			return nil
 		}
 		defer attachResult.Close()
-
-		// Log session started in audit logs
-		logAudit(userClaims.ID, userClaims.Username, "SHELL_SESSION", containerName, "Success", "Interactive shell session started")
 
 		errChan := make(chan error, 2)
 		go func() {
@@ -1559,12 +1540,6 @@ func main() {
 				if err != nil {
 					errChan <- err
 					return
-				}
-
-				// Log command text to audit logs
-				cmdStr := strings.TrimSpace(string(msg))
-				if len(cmdStr) > 0 && cmdStr != "\u0003" { // Ignore empty commands and Ctrl+C ASCII 3
-					logAudit(userClaims.ID, userClaims.Username, "SHELL_COMMAND", containerName, "Success", "Executed command: "+cmdStr)
 				}
 
 				_, err = attachResult.Conn.Write(msg)
@@ -1594,7 +1569,6 @@ func main() {
 		}()
 
 		<-errChan
-		logAudit(userClaims.ID, userClaims.Username, "SHELL_SESSION", containerName, "Success", "Interactive shell session closed")
 		return nil
 	})
 
@@ -1790,6 +1764,21 @@ func seedAdmin() {
 		if err != nil {
 			log.Fatalf("Failed to hash default admin password: %v", err)
 		}
-		db.DB.Exec("INSERT INTO users (username, password, is_admin, password_changed) VALUES (?, ?, ?, ?)", "admin", string(h), true, false)
+		_, err = db.DB.Exec(
+			`INSERT INTO users (username, password, is_admin, can_start, can_stop, can_restart, can_delete, can_shell, password_changed)
+			 VALUES (?, ?, 1, 1, 1, 1, 1, 1, 0)`,
+			"admin", string(h),
+		)
+		if err != nil {
+			log.Fatalf("Failed to create default admin: %v", err)
+		}
+	}
+
+	_, err := db.DB.Exec(
+		`UPDATE users SET can_start = 1, can_stop = 1, can_restart = 1, can_delete = 1, can_shell = 1
+		 WHERE is_admin = 1 AND (can_start = 0 OR can_stop = 0 OR can_restart = 0 OR can_delete = 0 OR can_shell = 0)`,
+	)
+	if err != nil {
+		log.Printf("Warning: failed to sync admin action permissions: %v", err)
 	}
 }

@@ -73,10 +73,10 @@ router.beforeEach(async (to, from, next) => {
       if (res.ok) {
         const data = await res.json();
         sharedState.isAuthDisabled = data.auth_disabled === true;
-        sharedState.envStartPermission = data.allow_start !== false;
-        sharedState.envStopPermission = data.allow_stop !== false;
-        sharedState.envRestartPermission = data.allow_restart !== false;
-        sharedState.envDeletePermission = data.allow_delete !== false;
+        sharedState.envStartPermission = data.allow_start === true;
+        sharedState.envStopPermission = data.allow_stop === true;
+        sharedState.envRestartPermission = data.allow_restart === true;
+        sharedState.envDeletePermission = data.allow_delete === true;
         sharedState.envShellPermission = data.allow_shell === true;
       }
     } catch (e) {

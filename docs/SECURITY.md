@@ -30,11 +30,17 @@ Administrators can restrict which containers a user can see using **Allowed Cont
 The backend translates glob wildcards into anchored regex patterns to prevent accidental exposure.
 
 ### 2. Action Rights
-Even if a container is visible, a user must have explicit rights to perform actions:
-- `can_start`: Ability to start stopped containers.
-- `can_stop`: Ability to stop running containers.
-- `can_restart`: Ability to restart containers.
-- `can_delete`: Ability to permanently remove containers.
+Container actions use the same two-layer model as shell access:
+
+1. **Server env** — the action must be enabled (`ALLOW_START`, `ALLOW_STOP`, `ALLOW_RESTART`, `ALLOW_DELETE`, `ALLOW_SHELL`).
+2. **User DB flags** — every account (including administrators) also needs the matching `can_*` permission.
+
+Action flags:
+- `can_start`: Start stopped containers (requires `ALLOW_START=true`).
+- `can_stop`: Stop running containers (requires `ALLOW_STOP=true`).
+- `can_restart`: Restart containers (requires `ALLOW_RESTART=true`).
+- `can_delete`: Remove containers (requires `ALLOW_DELETE=true`).
+- `can_shell`: Interactive shell (requires `ALLOW_SHELL=true` or `ALLOW_BASH=true`).
 
 ## 🕵️ Audit Logging
 
@@ -53,6 +59,16 @@ Administrators can view these logs directly in the **Admin Panel**.
 1.  **Reverse Proxy**: Always run DockLog behind a reverse proxy (Nginx, Traefik, Caddy) to handle SSL/TLS termination.
 2.  **Docker Socket**: Be careful with mounting the Docker socket. Only expose DockLog to trusted networks or use a VPN.
 3.  **Password Policy**: Minimum 8 characters. First login requires a password change. Default credentials are `admin` / `admin123` — change immediately after first login.
+
+### Emergency password reset (CLI)
+
+If an administrator is locked out, reset the password from the host (do not use `sqlite3` on the live DB — the server holds a write lock):
+
+```bash
+docker exec docklog ./docklog reset-password admin 'YourNewPassword123'
+```
+
+If the database is locked, stop the service and run a one-off container with the same `DB_PATH` volume, then start again.
 
 ## 🌐 Client Access Control
 

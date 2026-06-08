@@ -108,7 +108,7 @@ Most Docker log viewers are built for a single administrator. DockLog is built f
 ## 🔐 Advanced RBAC
 
 - Wildcard permissions (`backend-*`) and full regex (`^prod-.*$`)
-- Per-user start / stop / restart / delete rights
+- Two-layer action rights: server `ALLOW_*` env flags plus per-user `can_*` permissions
 - Staff management and container-level isolation
 
 ## 🕵️ Audit & Security
@@ -172,11 +172,12 @@ See [Security & RBAC](docs/SECURITY.md) for details.
 | `ALLOWED_ORIGINS` | Extra browser origins for the Vue UI (comma-separated URLs) | _(empty)_ |
 | `TRUST_PROXY` | Honor `X-Forwarded-*` headers when behind a reverse proxy | `false` |
 | `ENV` | Set to `production` to disable localhost origin bypass | _(empty)_ |
-| `ALLOW_START` | Allow start action (no-auth mode env flags) | `false` |
-| `ALLOW_STOP` | Allow stop action | `false` |
-| `ALLOW_RESTART` | Allow restart action | `false` |
-| `ALLOW_DELETE` | Allow delete action | `false` |
-| `ALLOW_SHELL` | Allow interactive shell over WebSocket | `false` |
+| `ALLOW_START` | Enable start action (server gate; users also need `can_start`) | `false` |
+| `ALLOW_STOP` | Enable stop action (server gate; users also need `can_stop`) | `false` |
+| `ALLOW_RESTART` | Enable restart action (server gate; users also need `can_restart`) | `false` |
+| `ALLOW_DELETE` | Enable delete action (server gate; users also need `can_delete`) | `false` |
+| `ALLOW_SHELL` | Enable interactive shell (server gate; users also need `can_shell`) | `false` |
+| `ALLOW_BASH` | Alias for `ALLOW_SHELL` | `false` |
 
 ### Production checklist
 
@@ -206,7 +207,7 @@ Set `CLIENT_ACCESS=off` only for local debugging.
 
 ## 👑 Administrator
 
-Full container visibility, user management, audit log access, and container control.
+Full container visibility, user management, and audit log access. Container actions still require both the server `ALLOW_*` env flag and the matching `can_*` permission on the account (default admin is seeded with all action flags).
 
 ## 🛠 Staff Member
 
@@ -252,6 +253,11 @@ services:
       - DB_PATH=/app/data/docklog.db
       - CLIENT_ACCESS=strict
       - ENV=production
+      - TRUST_PROXY=true
+      - ALLOWED_ORIGINS=https://your-domain.com
+      - ALLOW_START=true
+      - ALLOW_STOP=true
+      - ALLOW_RESTART=true
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./data:/app/data

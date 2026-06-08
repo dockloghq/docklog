@@ -91,7 +91,7 @@
               <div class="action-group justify-end" @click.stop>
                 <div class="action-cluster primary-actions">
                   <button
-                    v-if="(sharedState.currentUser?.is_admin || sharedState.currentUser?.can_start) && c.state !== 'running'"
+                    v-if="userCanStart(sharedState.currentUser) && c.state !== 'running'"
                     @click="triggerConfirm(c.id, 'start')"
                     class="icon-btn start"
                     data-tooltip="Start"
@@ -108,7 +108,7 @@
                   </svg>
                 </button>
                 <button
-                  v-if="(sharedState.currentUser?.is_admin || sharedState.currentUser?.can_stop) && c.state === 'running'"
+                  v-if="userCanStop(sharedState.currentUser) && c.state === 'running'"
                   @click="triggerConfirm(c.id, 'stop')"
                   class="icon-btn stop"
                   data-tooltip="Stop"
@@ -125,7 +125,7 @@
                   </svg>
                 </button>
                 <button
-                  v-if="sharedState.currentUser?.is_admin || sharedState.currentUser?.can_restart"
+                  v-if="userCanRestart(sharedState.currentUser)"
                   @click="triggerConfirm(c.id, 'restart')"
                   class="icon-btn restart"
                   data-tooltip="Restart"
@@ -164,7 +164,7 @@
                   </svg>
                 </button>
                 <button
-                  v-if="sharedState.currentUser?.is_admin || sharedState.currentUser?.can_delete"
+                  v-if="userCanDelete(sharedState.currentUser)"
                   @click="triggerConfirm(c.id, 'remove')"
                   class="icon-btn delete"
                   data-tooltip="Delete"
@@ -248,7 +248,7 @@
 <script setup>
 import { computed } from 'vue';
 import { useContainers } from '../composables/useContainers';
-import { sharedState } from '../utils/sharedState';
+import { sharedState, userCanStart, userCanStop, userCanRestart, userCanDelete } from '../utils/sharedState';
 
 const props = defineProps({
   stateFilter: {

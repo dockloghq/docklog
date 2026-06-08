@@ -417,6 +417,69 @@ func (rl *loginRateLimiter) clear(key string) {
 	delete(rl.attempts, key)
 }
 
+func containerActionEnvAllowed(action string) bool {
+	switch action {
+	case "start":
+		return CanStart
+	case "stop":
+		return CanStop
+	case "restart":
+		return CanRestart
+	case "remove":
+		return CanDelete
+	default:
+		return false
+	}
+}
+
+func clampStaffActionPermissions(canStart, canStop, canRestart, canDelete, canShell bool) (bool, bool, bool, bool, bool) {
+	if !CanStart {
+		canStart = false
+	}
+	if !CanStop {
+		canStop = false
+	}
+	if !CanRestart {
+		canRestart = false
+	}
+	if !CanDelete {
+		canDelete = false
+	}
+	if !AllowShell {
+		canShell = false
+	}
+	return canStart, canStop, canRestart, canDelete, canShell
+}
+
+func staffContainerActionQuery(action string) string {
+	switch action {
+	case "start":
+		return "SELECT can_start FROM users WHERE id = ? AND is_active = 1"
+	case "stop":
+		return "SELECT can_stop FROM users WHERE id = ? AND is_active = 1"
+	case "restart":
+		return "SELECT can_restart FROM users WHERE id = ? AND is_active = 1"
+	case "remove":
+		return "SELECT can_delete FROM users WHERE id = ? AND is_active = 1"
+	default:
+		return ""
+	}
+}
+
+func staffHasContainerActionPermission(action string, userID int) (bool, error) {
+	query := staffContainerActionQuery(action)
+	if query == "" {
+		return false, nil
+	}
+
+	var can bool
+	err := db.DB.QueryRow(query, userID).Scan(&can)
+	if err != nil {
+		return false, err
+	}
+	return can, nil
+}
+
 func extractWSToken(r *http.Request) string {
 	auth := r.Header.Get("Authorization")
 	if strings.HasPrefix(auth, "Bearer ") {
@@ -439,18 +502,18 @@ func extractWSToken(r *http.Request) string {
 }
 
 func refreshClaimsFromDB(claims *UserClaims) error {
-	var changed, active, isAdmin, canStart, canStop, canRestart, canDelete, isRestricted bool
+	var changed, active, isAdmin, canStart, canStop, canRestart, canDelete, canShell, isRestricted bool
 	var dbPwdVersion int
 	var allowedContainers string
 
 	err := db.DB.QueryRow(
 		`SELECT password_changed, is_active, COALESCE(password_version, 1),
-		 is_admin, can_start, can_stop, can_restart, can_delete, is_restricted_access, allowed_containers
+		 is_admin, can_start, can_stop, can_restart, can_delete, can_shell, is_restricted_access, allowed_containers
 		 FROM users WHERE id = ?`,
 		claims.ID,
 	).Scan(
 		&changed, &active, &dbPwdVersion,
-		&isAdmin, &canStart, &canStop, &canRestart, &canDelete, &isRestricted, &allowedContainers,
+		&isAdmin, &canStart, &canStop, &canRestart, &canDelete, &canShell, &isRestricted, &allowedContainers,
 	)
 	if err != nil {
 		return err
@@ -468,6 +531,7 @@ func refreshClaimsFromDB(claims *UserClaims) error {
 	claims.CanStop = canStop
 	claims.CanRestart = canRestart
 	claims.CanDelete = canDelete
+	claims.CanShell = canShell
 	claims.IsRestrictedAccess = isRestricted
 	claims.AllowedContainers = allowedContainers
 	claims.IsActive = active

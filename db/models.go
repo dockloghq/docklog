@@ -2,16 +2,31 @@ package db
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
 
 var DB *sql.DB
 
+func sqliteDSN(path string) string {
+	if path == ":memory:" {
+		return path
+	}
+	if strings.HasPrefix(path, "file:") {
+		return path
+	}
+	return fmt.Sprintf(
+		"file:%s?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)",
+		path,
+	)
+}
+
 func InitDB(dataSourceName string) error {
 	var err error
-	DB, err = sql.Open("sqlite", dataSourceName)
+	DB, err = sql.Open("sqlite", sqliteDSN(dataSourceName))
 	if err != nil {
 		return err
 	}
@@ -66,18 +81,20 @@ func InitDB(dataSourceName string) error {
 		return err
 	}
 
-	// Auto-migration: add password_version column for existing databases
-	_, migErr := DB.Exec("ALTER TABLE users ADD COLUMN password_version INTEGER DEFAULT 1")
-	if migErr != nil {
-		// Column likely already exists — safe to ignore
-		log.Printf("Migration note (safe to ignore): %v", migErr)
-	}
-
-	_, migErr = DB.Exec("ALTER TABLE users ADD COLUMN can_shell BOOLEAN DEFAULT 0")
-	if migErr != nil {
-		log.Printf("Migration note (safe to ignore): %v", migErr)
+	// Auto-migration for databases created before these columns existed.
+	for _, stmt := range []string{
+		"ALTER TABLE users ADD COLUMN password_version INTEGER DEFAULT 1",
+		"ALTER TABLE users ADD COLUMN can_shell BOOLEAN DEFAULT 0",
+	} {
+		if _, migErr := DB.Exec(stmt); migErr != nil && !isDuplicateColumnError(migErr) {
+			log.Printf("Migration failed: %v", migErr)
+		}
 	}
 
 	return nil
+}
+
+func isDuplicateColumnError(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "duplicate column")
 }
 

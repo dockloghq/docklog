@@ -148,6 +148,40 @@ func TestSecFetchSiteWithoutOriginBlockedWhenHostNotAllowed(t *testing.T) {
 	}
 }
 
+func TestContainerActionEnvGate(t *testing.T) {
+	CanStart = false
+	defer func() {
+		CanStart = false
+	}()
+
+	if containerActionEnvAllowed("start") {
+		t.Fatal("expected start to be denied when ALLOW_START is false")
+	}
+
+	CanStart = true
+	if !containerActionEnvAllowed("start") {
+		t.Fatal("expected start to be allowed when ALLOW_START is true")
+	}
+}
+
+func TestClampStaffActionPermissions(t *testing.T) {
+	CanStart = true
+	CanStop = false
+	CanRestart = true
+	CanDelete = false
+	AllowShell = true
+	defer func() {
+		CanStart = false
+		CanRestart = false
+		AllowShell = false
+	}()
+
+	start, stop, restart, del, shell := clampStaffActionPermissions(true, true, true, true, true)
+	if !start || stop || !restart || del || !shell {
+		t.Fatalf("unexpected clamp result: %v %v %v %v %v", start, stop, restart, del, shell)
+	}
+}
+
 func TestNativeClientAllowedWithoutOrigin(t *testing.T) {
 	resetClientAccessState()
 	req := newTestRequest("POST", "http://192.168.1.10:8888/api/token", nil)

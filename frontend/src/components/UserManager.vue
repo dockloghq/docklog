@@ -30,30 +30,36 @@
             </td>
             <td data-label="Permissions">
               <div class="perm-tags">
-                <span v-if="u.is_admin" class="badge badge-success"
-                  >ALL ACCESS</span
+                <span
+                  v-if="envStartPermission && u.can_start"
+                  class="badge badge-dim mini"
+                  >START</span
                 >
-                <template v-else>
-                  <span v-if="u.can_start" class="badge badge-dim mini"
-                    >START</span
-                  >
-                  <span v-if="u.can_stop" class="badge badge-dim mini"
-                    >STOP</span
-                  >
-                  <span v-if="u.can_restart" class="badge badge-dim mini"
-                    >RESTART</span
-                  >
-                  <span
-                    v-if="envShellPermission && u.can_shell"
-                    class="badge badge-dim mini"
-                    >SHELL</span
-                  >
-                  <span
-                    v-if="!u.can_start && !u.can_stop && !u.can_restart && !(envShellPermission && u.can_shell)"
-                    class="badge badge-dim mini"
-                    >READ-ONLY</span
-                  >
-                </template>
+                <span
+                  v-if="envStopPermission && u.can_stop"
+                  class="badge badge-dim mini"
+                  >STOP</span
+                >
+                <span
+                  v-if="envRestartPermission && u.can_restart"
+                  class="badge badge-dim mini"
+                  >RESTART</span
+                >
+                <span
+                  v-if="envDeletePermission && u.can_delete"
+                  class="badge badge-dim mini"
+                  >DELETE</span
+                >
+                <span
+                  v-if="envShellPermission && u.can_shell"
+                  class="badge badge-dim mini"
+                  >SHELL</span
+                >
+                <span
+                  v-if="!hasActionRights(u)"
+                  class="badge badge-dim mini"
+                  >READ-ONLY</span
+                >
               </div>
             </td>
             <td data-label="Status">
@@ -519,24 +525,30 @@ const props = defineProps({
 });
 const emit = defineEmits(["update-count"]);
 
+const envStartPermission = computed(() => sharedState.envStartPermission === true);
+const envStopPermission = computed(() => sharedState.envStopPermission === true);
+const envRestartPermission = computed(() => sharedState.envRestartPermission === true);
+const envDeletePermission = computed(() => sharedState.envDeletePermission === true);
 const envShellPermission = computed(() => sharedState.envShellPermission === true);
 
-const baseActionRights = [
-  { key: "start", label: "Start", field: "can_start", createField: "canStart" },
-  { key: "stop", label: "Stop", field: "can_stop", createField: "canStop" },
-  { key: "restart", label: "Restart", field: "can_restart", createField: "canRestart" },
-  { key: "delete", label: "Delete", field: "can_delete", createField: "canDelete" },
+const allActionRights = [
+  { key: "start", label: "Start", field: "can_start", createField: "canStart", enabled: envStartPermission },
+  { key: "stop", label: "Stop", field: "can_stop", createField: "canStop", enabled: envStopPermission },
+  { key: "restart", label: "Restart", field: "can_restart", createField: "canRestart", enabled: envRestartPermission },
+  { key: "delete", label: "Delete", field: "can_delete", createField: "canDelete", enabled: envDeletePermission },
+  { key: "shell", label: "Shell", field: "can_shell", createField: "canShell", enabled: envShellPermission },
 ];
 
-const actionRights = computed(() => {
-  if (!envShellPermission.value) {
-    return baseActionRights;
-  }
-  return [
-    ...baseActionRights,
-    { key: "shell", label: "Shell", field: "can_shell", createField: "canShell" },
-  ];
-});
+const actionRights = computed(() =>
+  allActionRights.filter((action) => action.enabled.value),
+);
+
+const hasActionRights = (user) =>
+  (envStartPermission.value && user.can_start) ||
+  (envStopPermission.value && user.can_stop) ||
+  (envRestartPermission.value && user.can_restart) ||
+  (envDeletePermission.value && user.can_delete) ||
+  (envShellPermission.value && user.can_shell);
 
 const staffUsers = ref([]);
 const showCreateModal = ref(false);
