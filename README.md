@@ -226,6 +226,8 @@ Users only see containers matching their assigned rules.
 
 # 🚀 Getting Started
 
+DockLog only needs access to a Docker daemon (`/var/run/docker.sock`). Pick **either** deployment option below — both use the same settings. The containers you manage can be started any way (`docker run`, Compose, CI scripts, Coolify, etc.).
+
 ## 🔑 Default Login
 
 | Username | Password |
@@ -237,7 +239,34 @@ Users only see containers matching their assigned rules.
 
 ---
 
-## 🐳 Docker Compose (recommended)
+## 🐳 Deployment
+
+### Option A — `docker run`
+
+```bash
+mkdir -p data
+
+docker run -d \
+  --name docklog \
+  -p 8888:8000 \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v "$(pwd)/data:/app/data" \
+  -e SECRET_KEY=your-secure-key-here \
+  -e DB_PATH=/app/data/docklog.db \
+  -e CLIENT_ACCESS=strict \
+  -e ENV=production \
+  -e TRUST_PROXY=true \
+  -e ALLOWED_ORIGINS=https://your-domain.com \
+  -e ALLOW_START=true \
+  -e ALLOW_STOP=true \
+  -e ALLOW_RESTART=true \
+  --restart unless-stopped \
+  aimldev/docklog:latest
+```
+
+### Option B — Docker Compose
+
+Save as `docker-compose.yaml` (or use the file in this repository):
 
 ```yaml
 version: "3.8"
@@ -264,37 +293,31 @@ services:
     restart: unless-stopped
 ```
 
-Or build locally from this repository:
+```bash
+docker compose up -d
+```
+
+Build from this repository instead of pulling the image:
 
 ```bash
 docker compose up --build -d
 ```
 
-Open **http://localhost:8888**
-
-### No-auth mode (development only)
-
-```yaml
-environment:
-  - DISABLE_AUTH=true
-```
-
 ---
 
-## 🐳 Direct Docker Run
+### After install
+
+Open **http://localhost:8888** (or your reverse-proxy URL).
+
+Generate a production secret:
 
 ```bash
-docker run -d \
-  --name docklog \
-  -p 8888:8000 \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v $(pwd)/data:/app/data \
-  -e SECRET_KEY=your-secure-key-here \
-  -e DB_PATH=/app/data/docklog.db \
-  -e CLIENT_ACCESS=strict \
-  --restart unless-stopped \
-  aimldev/docklog:latest
+openssl rand -base64 32
 ```
+
+Behind a reverse proxy, set `TRUST_PROXY=true` and `ALLOWED_ORIGINS` to your public HTTPS URL. Omit `ALLOWED_ORIGINS` for local-only access.
+
+**No-auth mode (development only):** add `DISABLE_AUTH=true` to the environment (Compose) or `-e DISABLE_AUTH=true` (`docker run`). In-memory DB — not for production.
 
 ---
 
