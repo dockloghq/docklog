@@ -33,7 +33,7 @@
             <td data-label="Container">
               <div
                 class="name-cell clickable"
-                @click="goToLogs(c.id)"
+                @click="goToDetail(c.id)"
               >
                 <div class="container-avatar" :class="c.state === 'running' ? 'running' : 'stopped'">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -145,6 +145,16 @@
                 </div>
                 <div class="action-cluster secondary-actions">
                 <button
+                  v-if="userCanShell(sharedState.currentUser) && c.state === 'running'"
+                  @click="goToShell(c.id)"
+                  class="icon-btn shell"
+                  type="button"
+                  aria-label="Open container shell"
+                  data-tooltip="Shell (bash)"
+                >
+                  <AppIcon name="terminal" :size="16" :stroke-width="2.25" />
+                </button>
+                <button
                   @click="goToLogs(c.id)"
                   class="icon-btn logs"
                   data-tooltip="View logs"
@@ -248,7 +258,8 @@
 <script setup>
 import { computed } from 'vue';
 import { useContainers } from '../composables/useContainers';
-import { sharedState, userCanStart, userCanStop, userCanRestart, userCanDelete } from '../utils/sharedState';
+import AppIcon from './AppIcon.vue';
+import { sharedState, userCanStart, userCanStop, userCanRestart, userCanDelete, userCanShell } from '../utils/sharedState';
 
 const props = defineProps({
   stateFilter: {
@@ -268,7 +279,7 @@ const props = defineProps({
 const {
   loading, filteredContainers, activeLiveId, liveStats,
   showConfirm, pendingAction, actionClass,
-  startLiveStats, stopLiveStats, goToLogs, triggerConfirm, executeAction,
+  startLiveStats, stopLiveStats, goToLogs, goToShell, goToDetail, triggerConfirm, executeAction,
   formatBytes, formatDate,
 } = useContainers();
 
@@ -391,6 +402,14 @@ const displayContainers = computed(() => {
   color: var(--accent);
   border-color: rgba(var(--accent-rgb), 0.35);
   background: var(--accent-soft);
+}
+
+.icon-btn.shell:hover,
+.icon-btn.shell:focus-visible {
+  color: #8b5cf6;
+  border-color: rgba(139, 92, 246, 0.4);
+  background: rgba(139, 92, 246, 0.1);
+  box-shadow: 0 4px 14px rgba(139, 92, 246, 0.15);
 }
 
 .icon-btn.delete:hover {

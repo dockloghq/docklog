@@ -8,7 +8,7 @@
 
     <!-- Redesigned Sidebar -->
     <aside
-      v-if="!isLogPage || isMobileMenuOpen"
+      v-if="!isFullBleedPage || isMobileMenuOpen"
       :class="[
         'main-sidebar',
         { 'mobile-open': isMobileMenuOpen, collapsed: isSidebarCollapsed },
@@ -262,7 +262,7 @@
           <!-- Mobile Menu Trigger -->
           <button
             class="nav-icon-btn mobile-only"
-            v-if="!route.path.startsWith('/logs')"
+            v-if="!isFullBleedPage"
             @click="isMobileMenuOpen = true"
             aria-label="Open menu"
           >
@@ -283,7 +283,7 @@
           <router-link
             to="/dashboard"
             class="sidebar-logo logs-route hide-mobile"
-            v-if="route.path.startsWith('/logs')"
+            v-if="isFullBleedPage"
           >
             <img :src="logoSrc" alt="DockLog" class="logo-img-sidebar" />
             <span class="logo-text">DockLog</span>
@@ -414,7 +414,7 @@
         </div>
       </div>
 
-      <div :class="['layout-body', { 'no-padding': isLogPage }]">
+      <div :class="['layout-body', { 'no-padding': isFullBleedPage }]">
         <slot v-if="!sharedState.forcePasswordChange" />
       </div>
     </div>
@@ -578,7 +578,7 @@ const showUserMenu = ref(false);
 const isMobileMenuOpen = ref(false);
 const isMobileSearchOpen = ref(false);
 const isSidebarCollapsed = ref(false);
-const isLogPage = computed(() => route.name === "Logs");
+const isFullBleedPage = computed(() => route.name === "Logs" || route.name === "Shell");
 let statsWs = null;
 let userInterval = null;
 let statsReconnectTimer = null;

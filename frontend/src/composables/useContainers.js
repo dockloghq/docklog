@@ -118,6 +118,14 @@ export function useContainers(options = {}) {
     router.push({ path: '/logs', query: { c: id } });
   };
 
+  const goToShell = (id) => {
+    router.push({ path: '/shell', query: { c: id } });
+  };
+
+  const goToDetail = (id) => {
+    router.push({ path: `/containers/${id}` });
+  };
+
   const triggerConfirm = (id, action) => {
     pendingId.value = id;
     pendingAction.value = action;
@@ -177,6 +185,8 @@ export function useContainers(options = {}) {
     startLiveStats,
     stopLiveStats,
     goToLogs,
+    goToShell,
+    goToDetail,
     triggerConfirm,
     executeAction,
     formatBytes,

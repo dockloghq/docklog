@@ -65,7 +65,7 @@ Administrators can view these logs directly in the **Admin Panel**.
 If an administrator is locked out, reset the password from the host (do not use `sqlite3` on the live DB — the server holds a write lock):
 
 ```bash
-docker exec docklog ./docklog reset-password admin 'YourNewPassword123'
+docker exec docklog docklog reset-password admin 'YourNewPassword123'
 ```
 
 If the database is locked, stop the service and run a one-off container with the same `DB_PATH` volume, then start again.

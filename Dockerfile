@@ -24,8 +24,8 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
 FROM alpine:3.21
 WORKDIR /app
 RUN apk add --no-cache ca-certificates libc6-compat
-COPY --from=backend-builder /app/docklog .
+COPY --from=backend-builder /app/docklog /usr/local/bin/docklog
 COPY --from=backend-builder /app/frontend/dist ./frontend/dist
 
 EXPOSE 8000
-CMD ["./docklog"]
+CMD ["docklog", "server"]

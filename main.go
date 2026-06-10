@@ -40,7 +40,7 @@ var (
 	CanStop      bool
 	CanRestart   bool
 	CanDelete    bool
-	AllowShell   bool
+	AllowShell bool
 )
 
 type Container struct {
@@ -156,9 +156,11 @@ func appendValidatedPattern(patterns []string, regP string) []string {
 }
 
 func main() {
-	if maybeRunCLI() {
-		return
+	if exit, code := dispatchCLI(os.Args); exit {
+		os.Exit(code)
 	}
+
+	logRunMode()
 
 	AuthDisabled = os.Getenv("DISABLE_AUTH") == "true" || os.Getenv("NO_AUTH") == "true"
 	initSecretKey()
@@ -178,6 +180,7 @@ func main() {
 	CanRestart = getEnvBool("ALLOW_RESTART", false)
 	CanDelete = getEnvBool("ALLOW_DELETE", false)
 	AllowShell = getEnvBool("ALLOW_SHELL", false) || getEnvBool("ALLOW_BASH", false)
+	initExcludedContainers()
 
 	// DB Init
 	dbPath := os.Getenv("DB_PATH")
@@ -457,6 +460,10 @@ func main() {
 				continue // Skip invalid containers
 			}
 
+			if isExcludedContainer(name, image) {
+				continue
+			}
+
 			shortID := id
 			if len(id) > 12 {
 				shortID = id[:12]
@@ -538,29 +545,18 @@ func main() {
 			}
 		}
 
-		// Sanitize environment variables to prevent leaking secrets
+		containerName := strings.TrimPrefix(container.Container.Name, "/")
+		containerImage := ""
+		if container.Container.Config != nil {
+			containerImage = container.Container.Config.Image
+		}
+
+		if isExcludedContainer(containerName, containerImage) {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "Container not found"})
+		}
+
 		if container.Container.Config != nil && len(container.Container.Config.Env) > 0 {
-			sanitized := make([]string, len(container.Container.Config.Env))
-			for i, item := range container.Container.Config.Env {
-				parts := strings.SplitN(item, "=", 2)
-				if len(parts) == 2 {
-					k := strings.ToLower(parts[0])
-					if strings.Contains(k, "pass") ||
-						strings.Contains(k, "secret") ||
-						strings.Contains(k, "key") ||
-						strings.Contains(k, "token") ||
-						strings.Contains(k, "auth") ||
-						strings.Contains(k, "pwd") ||
-						strings.Contains(k, "db_") {
-						sanitized[i] = parts[0] + "=••••••••••••"
-					} else {
-						sanitized[i] = item
-					}
-				} else {
-					sanitized[i] = item
-				}
-			}
-			container.Container.Config.Env = sanitized
+			container.Container.Config.Env = sanitizeContainerEnv(container.Container.Config.Env)
 		}
 
 		return c.JSON(http.StatusOK, container)
@@ -582,6 +578,19 @@ func main() {
 			return c.JSON(http.StatusForbidden, map[string]string{"error": detail})
 		}
 
+		target, err := cli.ContainerInspect(context.Background(), id, client.ContainerInspectOptions{})
+		if err != nil {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "Target container not found."})
+		}
+		targetImage := ""
+		if target.Container.Config != nil {
+			targetImage = target.Container.Config.Image
+		}
+		if inspectContainerExcluded(target.Container.Name, targetImage) {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "Target container not found."})
+		}
+		targetName := strings.TrimPrefix(target.Container.Name, "/")
+
 		if !AuthDisabled {
 			can, err := staffHasContainerActionPermission(action, userClaims.ID)
 			if err != nil || !can {
@@ -591,27 +600,20 @@ func main() {
 			}
 		}
 
-		// 2. Check Resource-Specific Regex Access (from DB, not JWT)
 		var dbIsAdmin bool
 		db.DB.QueryRow("SELECT COALESCE(is_admin, 0) FROM users WHERE id = ?", userClaims.ID).Scan(&dbIsAdmin)
 		if !dbIsAdmin {
-			container, err := cli.ContainerInspect(context.Background(), id, client.ContainerInspectOptions{})
-			if err != nil {
-				return c.JSON(http.StatusNotFound, map[string]string{"error": "Target container not found."})
-			}
-			containerName := strings.TrimPrefix(container.Container.Name, "/")
-
 			patterns := getAuthorizedPatterns(userClaims.ID)
 			authorized := false
 			for _, p := range patterns {
-				if matched, _ := regexp.MatchString(p, containerName); matched {
+				if matched, _ := regexp.MatchString(p, targetName); matched {
 					authorized = true
 					break
 				}
 			}
 
 			if !authorized {
-				logAudit(userClaims.ID, userClaims.Username, action, containerName, "Forbidden", "Security Restriction: Regex level rights missing.")
+				logAudit(userClaims.ID, userClaims.Username, action, targetName, "Forbidden", "Security Restriction: Regex level rights missing.")
 				return c.JSON(http.StatusForbidden, map[string]string{"error": "Security Restriction: You are not authorized to interact with this container resource."})
 			}
 		}
@@ -643,13 +645,20 @@ func main() {
 		token := c.Get("user").(*jwt.Token)
 		userClaims := token.Claims.(*UserClaims)
 
-		if !userClaims.IsAdmin {
-			container, err := cli.ContainerInspect(context.Background(), id, client.ContainerInspectOptions{})
-			if err != nil {
-				return c.NoContent(http.StatusNotFound)
-			}
-			containerName := strings.TrimPrefix(container.Container.Name, "/")
+		container, err := cli.ContainerInspect(context.Background(), id, client.ContainerInspectOptions{})
+		if err != nil {
+			return c.NoContent(http.StatusNotFound)
+		}
+		downloadImage := ""
+		if container.Container.Config != nil {
+			downloadImage = container.Container.Config.Image
+		}
+		if inspectContainerExcluded(container.Container.Name, downloadImage) {
+			return c.NoContent(http.StatusNotFound)
+		}
+		containerName := strings.TrimPrefix(container.Container.Name, "/")
 
+		if !userClaims.IsAdmin {
 			patterns := getAuthorizedPatterns(userClaims.ID)
 			authorized := false
 			for _, p := range patterns {
@@ -695,6 +704,13 @@ func main() {
 
 		container, err := cli.ContainerInspect(context.Background(), id, client.ContainerInspectOptions{})
 		if err != nil {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "Container not found"})
+		}
+		logsImage := ""
+		if container.Container.Config != nil {
+			logsImage = container.Container.Config.Image
+		}
+		if inspectContainerExcluded(container.Container.Name, logsImage) {
 			return c.JSON(http.StatusNotFound, map[string]string{"error": "Container not found"})
 		}
 
@@ -805,6 +821,13 @@ func main() {
 		if err != nil {
 			return c.JSON(http.StatusNotFound, map[string]string{"error": "Container not found"})
 		}
+		countImage := ""
+		if container.Container.Config != nil {
+			countImage = container.Container.Config.Image
+		}
+		if inspectContainerExcluded(container.Container.Name, countImage) {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "Container not found"})
+		}
 
 		if !userClaims.IsAdmin {
 			containerName := strings.TrimPrefix(container.Container.Name, "/")
@@ -849,13 +872,20 @@ func main() {
 		token := c.Get("user").(*jwt.Token)
 		userClaims := token.Claims.(*UserClaims)
 
-		if !userClaims.IsAdmin {
-			container, err := cli.ContainerInspect(context.Background(), id, client.ContainerInspectOptions{})
-			if err != nil {
-				return c.NoContent(http.StatusNotFound)
-			}
-			containerName := strings.TrimPrefix(container.Container.Name, "/")
+		container, err := cli.ContainerInspect(context.Background(), id, client.ContainerInspectOptions{})
+		if err != nil {
+			return c.NoContent(http.StatusNotFound)
+		}
+		statsImage := ""
+		if container.Container.Config != nil {
+			statsImage = container.Container.Config.Image
+		}
+		if inspectContainerExcluded(container.Container.Name, statsImage) {
+			return c.NoContent(http.StatusNotFound)
+		}
+		containerName := strings.TrimPrefix(container.Container.Name, "/")
 
+		if !userClaims.IsAdmin {
 			patterns := getAuthorizedPatterns(userClaims.ID)
 			authorized := false
 			for _, p := range patterns {
@@ -898,13 +928,20 @@ func main() {
 		token := c.Get("user").(*jwt.Token)
 		userClaims := token.Claims.(*UserClaims)
 
-		if !userClaims.IsAdmin {
-			container, err := cli.ContainerInspect(context.Background(), id, client.ContainerInspectOptions{})
-			if err != nil {
-				return c.NoContent(http.StatusNotFound)
-			}
-			containerName := strings.TrimPrefix(container.Container.Name, "/")
+		container, err := cli.ContainerInspect(context.Background(), id, client.ContainerInspectOptions{})
+		if err != nil {
+			return c.NoContent(http.StatusNotFound)
+		}
+		nowImage := ""
+		if container.Container.Config != nil {
+			nowImage = container.Container.Config.Image
+		}
+		if inspectContainerExcluded(container.Container.Name, nowImage) {
+			return c.NoContent(http.StatusNotFound)
+		}
+		containerName := strings.TrimPrefix(container.Container.Name, "/")
 
+		if !userClaims.IsAdmin {
 			patterns := getAuthorizedPatterns(userClaims.ID)
 			authorized := false
 			for _, p := range patterns {
@@ -987,6 +1024,13 @@ func main() {
 
 		container, err := cli.ContainerInspect(context.Background(), id, client.ContainerInspectOptions{})
 		if err != nil {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "Container not found"})
+		}
+		historyImage := ""
+		if container.Container.Config != nil {
+			historyImage = container.Container.Config.Image
+		}
+		if inspectContainerExcluded(container.Container.Name, historyImage) {
 			return c.JSON(http.StatusNotFound, map[string]string{"error": "Container not found"})
 		}
 
@@ -1422,14 +1466,20 @@ func main() {
 			return wsAuthError(c, err)
 		}
 
-		// Regex Access Check
-		if !userClaims.IsAdmin {
-			container, err := cli.ContainerInspect(context.Background(), id, client.ContainerInspectOptions{})
-			if err != nil {
-				return c.NoContent(http.StatusNotFound)
-			}
-			containerName := strings.TrimPrefix(container.Container.Name, "/")
+		container, err := cli.ContainerInspect(context.Background(), id, client.ContainerInspectOptions{})
+		if err != nil {
+			return c.NoContent(http.StatusNotFound)
+		}
+		wsLogsImage := ""
+		if container.Container.Config != nil {
+			wsLogsImage = container.Container.Config.Image
+		}
+		if inspectContainerExcluded(container.Container.Name, wsLogsImage) {
+			return c.NoContent(http.StatusNotFound)
+		}
+		containerName := strings.TrimPrefix(container.Container.Name, "/")
 
+		if !userClaims.IsAdmin {
 			patterns := getAuthorizedPatterns(userClaims.ID)
 			authorized := false
 			for _, p := range patterns {
@@ -1506,6 +1556,13 @@ func main() {
 		// Verify container exists and get its name
 		container, err := cli.ContainerInspect(context.Background(), id, client.ContainerInspectOptions{})
 		if err != nil {
+			return c.NoContent(http.StatusNotFound)
+		}
+		shellImage := ""
+		if container.Container.Config != nil {
+			shellImage = container.Container.Config.Image
+		}
+		if inspectContainerExcluded(container.Container.Name, shellImage) {
 			return c.NoContent(http.StatusNotFound)
 		}
 		containerName := strings.TrimPrefix(container.Container.Name, "/")
@@ -1606,15 +1663,17 @@ func main() {
 		return nil
 	})
 
-	// Serve Frontend
-	e.Use(middleware.StaticWithConfig(middleware.StaticConfig{
-		Root:   "frontend/dist",
-		Browse: false,
-		HTML5:  true,
-		Skipper: func(c echo.Context) bool {
-			return strings.HasPrefix(c.Path(), "/api") || strings.HasPrefix(c.Path(), "/ws")
-		},
-	}))
+	// Serve Frontend (skipped in agent-only mode)
+	if serveFrontend {
+		e.Use(middleware.StaticWithConfig(middleware.StaticConfig{
+			Root:   "frontend/dist",
+			Browse: false,
+			HTML5:  true,
+			Skipper: func(c echo.Context) bool {
+				return strings.HasPrefix(c.Path(), "/api") || strings.HasPrefix(c.Path(), "/ws")
+			},
+		}))
+	}
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -1624,7 +1683,7 @@ func main() {
 		port = ":" + port
 	}
 
-	log.Printf("DockLog (Go Edition) starting on %s\n", port)
+	log.Printf("DockLog %s listening on %s\n", Version, port)
 	e.Logger.Fatal(e.Start(port))
 }
 
@@ -1816,3 +1875,4 @@ func seedAdmin() {
 		log.Printf("Warning: failed to sync admin action permissions: %v", err)
 	}
 }
+

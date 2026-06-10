@@ -18,11 +18,11 @@
 
 <p align="center">
   <img src="https://img.shields.io/docker/pulls/aimldev/docklog" alt="Docker Pulls">
-  <img src="https://img.shields.io/github/license/dockloghq/docklog" alt="License">
+  <img src="https://img.shields.io/github/license/Team-AI-ML/docklog" alt="License">
   <img src="https://img.shields.io/badge/version-1.0.0-0891b2" alt="Version">
   <img src="https://img.shields.io/badge/Backend-Go-00add8" alt="Backend">
   <img src="https://img.shields.io/badge/Frontend-Vue--3-42b883" alt="Frontend">
-  <img src="https://img.shields.io/github/stars/dockloghq/docklog?style=social" alt="GitHub Stars">
+  <img src="https://img.shields.io/github/stars/Team-AI-ML/docklog?style=social" alt="GitHub Stars">
 </p>
 
 ---
@@ -108,7 +108,7 @@ Most Docker log viewers are built for a single administrator. DockLog is built f
 ## 🔐 Advanced RBAC
 
 - Wildcard permissions (`backend-*`) and full regex (`^prod-.*$`)
-- Two-layer action rights: server `ALLOW_*` env flags plus per-user `can_*` permissions
+- Per-user start / stop / restart / delete rights
 - Staff management and container-level isolation
 
 ## 🕵️ Audit & Security
@@ -172,12 +172,14 @@ See [Security & RBAC](docs/SECURITY.md) for details.
 | `ALLOWED_ORIGINS` | Extra browser origins for the Vue UI (comma-separated URLs) | _(empty)_ |
 | `TRUST_PROXY` | Honor `X-Forwarded-*` headers when behind a reverse proxy | `false` |
 | `ENV` | Set to `production` to disable localhost origin bypass | _(empty)_ |
-| `ALLOW_START` | Enable start action (server gate; users also need `can_start`) | `false` |
-| `ALLOW_STOP` | Enable stop action (server gate; users also need `can_stop`) | `false` |
-| `ALLOW_RESTART` | Enable restart action (server gate; users also need `can_restart`) | `false` |
-| `ALLOW_DELETE` | Enable delete action (server gate; users also need `can_delete`) | `false` |
-| `ALLOW_SHELL` | Enable interactive shell (server gate; users also need `can_shell`) | `false` |
-| `ALLOW_BASH` | Alias for `ALLOW_SHELL` | `false` |
+| `ALLOW_START` | Allow start action (no-auth mode env flags) | `false` |
+| `ALLOW_STOP` | Allow stop action | `false` |
+| `ALLOW_RESTART` | Allow restart action | `false` |
+| `ALLOW_DELETE` | Allow delete action | `false` |
+| `ALLOW_SHELL` | Allow interactive shell over WebSocket (`ALLOW_BASH` is an alias) | `false` |
+| `EXCLUDE_CONTAINERS` | Comma-separated container names to hide from the dashboard | _(empty)_ |
+
+The DockLog container itself is **always hidden** (matched by name `docklog` or image containing `docklog`).
 
 ### Production checklist
 
@@ -201,13 +203,23 @@ See [Security & RBAC](docs/SECURITY.md) for details.
 
 Set `CLIENT_ACCESS=off` only for local debugging.
 
+### DockLog Mobile (companion app)
+
+The official Flutter client supports **Advanced Settings** when adding a server:
+
+- **Resolve Host to IP** — `/etc/hosts`-style override when the URL hostname is not in public DNS
+- **Skip TLS verification** — self-signed certificates
+- **Custom HTTP headers** — Cloudflare Access and similar proxies
+
+See [`docs/FLUTTER.md`](docs/FLUTTER.md) and the [mobile app documentation](https://docklog.sauravsaini.dev/mobile-app).
+
 ---
 
 # 👥 User Roles
 
 ## 👑 Administrator
 
-Full container visibility, user management, and audit log access. Container actions still require both the server `ALLOW_*` env flag and the matching `can_*` permission on the account (default admin is seeded with all action flags).
+Full container visibility, user management, audit log access, and container control.
 
 ## 🛠 Staff Member
 
@@ -226,8 +238,6 @@ Users only see containers matching their assigned rules.
 
 # 🚀 Getting Started
 
-DockLog only needs access to a Docker daemon (`/var/run/docker.sock`). Pick **either** deployment option below — both use the same settings. The containers you manage can be started any way (`docker run`, Compose, CI scripts, Coolify, etc.).
-
 ## 🔑 Default Login
 
 | Username | Password |
@@ -239,34 +249,7 @@ DockLog only needs access to a Docker daemon (`/var/run/docker.sock`). Pick **ei
 
 ---
 
-## 🐳 Deployment
-
-### Option A — `docker run`
-
-```bash
-mkdir -p data
-
-docker run -d \
-  --name docklog \
-  -p 8888:8000 \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v "$(pwd)/data:/app/data" \
-  -e SECRET_KEY=your-secure-key-here \
-  -e DB_PATH=/app/data/docklog.db \
-  -e CLIENT_ACCESS=strict \
-  -e ENV=production \
-  -e TRUST_PROXY=true \
-  -e ALLOWED_ORIGINS=https://your-domain.com \
-  -e ALLOW_START=true \
-  -e ALLOW_STOP=true \
-  -e ALLOW_RESTART=true \
-  --restart unless-stopped \
-  aimldev/docklog:latest
-```
-
-### Option B — Docker Compose
-
-Save as `docker-compose.yaml` (or use the file in this repository):
+## 🐳 Docker Compose (recommended)
 
 ```yaml
 version: "3.8"
@@ -282,42 +265,43 @@ services:
       - DB_PATH=/app/data/docklog.db
       - CLIENT_ACCESS=strict
       - ENV=production
-      - TRUST_PROXY=true
-      - ALLOWED_ORIGINS=https://your-domain.com
-      - ALLOW_START=true
-      - ALLOW_STOP=true
-      - ALLOW_RESTART=true
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./data:/app/data
     restart: unless-stopped
 ```
 
-```bash
-docker compose up -d
-```
-
-Build from this repository instead of pulling the image:
+Or build locally from this repository:
 
 ```bash
 docker compose up --build -d
 ```
 
----
+Open **http://localhost:8888**
 
-### After install
+### No-auth mode (development only)
 
-Open **http://localhost:8888** (or your reverse-proxy URL).
-
-Generate a production secret:
-
-```bash
-openssl rand -base64 32
+```yaml
+environment:
+  - DISABLE_AUTH=true
 ```
 
-Behind a reverse proxy, set `TRUST_PROXY=true` and `ALLOWED_ORIGINS` to your public HTTPS URL. Omit `ALLOWED_ORIGINS` for local-only access.
+---
 
-**No-auth mode (development only):** add `DISABLE_AUTH=true` to the environment (Compose) or `-e DISABLE_AUTH=true` (`docker run`). In-memory DB — not for production.
+## 🐳 Direct Docker Run
+
+```bash
+docker run -d \
+  --name docklog \
+  -p 8888:8000 \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v $(pwd)/data:/app/data \
+  -e SECRET_KEY=your-secure-key-here \
+  -e DB_PATH=/app/data/docklog.db \
+  -e CLIENT_ACCESS=strict \
+  --restart unless-stopped \
+  aimldev/docklog:latest
+```
 
 ---
 
@@ -327,8 +311,31 @@ Behind a reverse proxy, set `TRUST_PROXY=true` and `ALLOWED_ORIGINS` to your pub
 # Build frontend + backend
 make build
 
+# Install to PATH (optional)
+make install          # -> /usr/local/bin/docklog
+# or: go install .
+
 # Run server (serves frontend/dist on :8000)
-./docklog
+docklog
+# same as: docklog server
+```
+
+### CLI commands
+
+| Command | Description |
+| ------- | ----------- |
+| `docklog` | Run full dashboard (default) |
+| `docklog server` | Full API + WebSockets + embedded Vue UI |
+| `docklog agent` | Fleet agent mode (local UI + API; optional `CONTROL_PLANE_URL`) |
+| `docklog agent-only` | Headless agent (API/WebSockets only, no bundled UI) |
+| `docklog reset-password <user> <pass>` | Reset a user password in SQLite |
+| `docklog config` | Print non-secret configuration |
+| `docklog version` | Print version |
+| `docklog help [command]` | Show help |
+
+```bash
+docklog help agent-only
+docker exec docklog docklog reset-password admin 'NewSecurePass1'
 ```
 
 Frontend dev server (separate terminal):

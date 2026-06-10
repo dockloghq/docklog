@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"strings"
 
@@ -62,18 +61,3 @@ func runResetPasswordCLI(args []string) error {
 	return nil
 }
 
-func maybeRunCLI() bool {
-	if len(os.Args) < 2 {
-		return false
-	}
-
-	switch os.Args[1] {
-	case "reset-password":
-		if err := runResetPasswordCLI(os.Args[2:]); err != nil {
-			log.Fatal(err)
-		}
-		return true
-	default:
-		return false
-	}
-}

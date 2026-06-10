@@ -17,11 +17,23 @@ const routes = [
     component: () => import('../views/Containers.vue'),
     meta: { requiresAuth: true, layout: 'main', title: 'Container Management' }
   },
+  {
+    path: '/containers/:id',
+    name: 'ContainerDetail',
+    component: () => import('../views/ContainerDetail.vue'),
+    meta: { requiresAuth: true, layout: 'main', title: 'Container Details' }
+  },
   { 
     path: '/logs', 
     name: 'Logs', 
     component: () => import('../views/Logs.vue'),
     meta: { requiresAuth: true, layout: 'main', title: 'Live Log Stream' }
+  },
+  {
+    path: '/shell',
+    name: 'Shell',
+    component: () => import('../views/Shell.vue'),
+    meta: { requiresAuth: true, layout: 'main', title: 'Container Shell' }
   },
   { 
     path: '/health', 
@@ -73,10 +85,10 @@ router.beforeEach(async (to, from, next) => {
       if (res.ok) {
         const data = await res.json();
         sharedState.isAuthDisabled = data.auth_disabled === true;
-        sharedState.envStartPermission = data.allow_start === true;
-        sharedState.envStopPermission = data.allow_stop === true;
-        sharedState.envRestartPermission = data.allow_restart === true;
-        sharedState.envDeletePermission = data.allow_delete === true;
+        sharedState.envStartPermission = data.allow_start !== false;
+        sharedState.envStopPermission = data.allow_stop !== false;
+        sharedState.envRestartPermission = data.allow_restart !== false;
+        sharedState.envDeletePermission = data.allow_delete !== false;
         sharedState.envShellPermission = data.allow_shell === true;
       }
     } catch (e) {
