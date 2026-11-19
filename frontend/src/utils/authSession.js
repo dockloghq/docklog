@@ -15,9 +15,22 @@ export async function shouldForceLogout(response, requestInput) {
   if (!response) return false;
 
   const url = getRequestUrl(requestInput);
+  if (isSessionExemptUrl(url)) return false;
 
   if (response.status === 401) {
-    return !isSessionExemptUrl(url);
+    try {
+      const contentType = response.headers.get("content-type") || "";
+      if (contentType.includes("application/json")) {
+        const payload = await response.clone().json();
+        // FORCE_PASSWORD_CHANGE should show modal, not wipe token and force logout
+        if (payload?.code === "FORCE_PASSWORD_CHANGE") {
+          return false;
+        }
+      }
+    } catch {
+      // Ignore json parsing issues
+    }
+    return true;
   }
 
   if (response.status === 403) {

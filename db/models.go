@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"log"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -15,6 +16,13 @@ func InitDB(dataSourceName string) error {
 	if err != nil {
 		return err
 	}
+
+	// Optimize SQLite performance and auto-reclaim disk space
+	_, _ = DB.Exec(`
+		PRAGMA journal_mode = WAL;
+		PRAGMA synchronous = NORMAL;
+		PRAGMA auto_vacuum = INCREMENTAL;
+	`)
 
 	// Create tables
 	schema := `
@@ -76,18 +84,17 @@ func InitDB(dataSourceName string) error {
 
 	// Auto-migration: add password_version column for existing databases
 	_, migErr := DB.Exec("ALTER TABLE users ADD COLUMN password_version INTEGER DEFAULT 1")
-	if migErr != nil {
-		// Column likely already exists; safe to ignore
+	if migErr != nil && !strings.Contains(migErr.Error(), "duplicate column") {
 		log.Printf("Migration note (safe to ignore): %v", migErr)
 	}
 
 	_, migErr = DB.Exec("ALTER TABLE users ADD COLUMN can_shell BOOLEAN DEFAULT 0")
-	if migErr != nil {
+	if migErr != nil && !strings.Contains(migErr.Error(), "duplicate column") {
 		log.Printf("Migration note (safe to ignore): %v", migErr)
 	}
 
 	_, migErr = DB.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_lower ON users (lower(username))`)
-	if migErr != nil {
+	if migErr != nil && !strings.Contains(migErr.Error(), "already exists") {
 		log.Printf("Migration note (safe to ignore): %v", migErr)
 	}
 

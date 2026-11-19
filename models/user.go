@@ -3,16 +3,19 @@ package models
 import "github.com/golang-jwt/jwt/v5"
 
 type Container struct {
-	ID       string  `json:"id"`
-	Name     string  `json:"name"`
-	Image    string  `json:"image"`
-	State    string  `json:"state"`
-	Created  int64   `json:"created"`
-	Status   string  `json:"status"`
-	CPULimit float64 `json:"cpu_limit"`
-	MemLimit int64   `json:"mem_limit"`
-	CPU      float64 `json:"cpu"`
-	Memory   int64   `json:"memory"`
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	Image        string   `json:"image"`
+	State        string   `json:"state"`
+	Created      int64    `json:"created"`
+	Status       string   `json:"status"`
+	CPULimit     float64  `json:"cpu_limit"`
+	MemLimit     int64    `json:"mem_limit"`
+	CPU          float64  `json:"cpu"`
+	Memory       int64    `json:"memory"`
+	IsSwarm      bool     `json:"is_swarm"`
+	SwarmService string   `json:"swarm_service,omitempty"`
+	Ports        []string `json:"ports,omitempty"`
 }
 
 type UserClaims struct {

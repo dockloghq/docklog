@@ -42,24 +42,8 @@
       </div>
 
       <div class="sidebar-header">
-        <span class="label-caps">Log Resources</span>
-        <div class="sidebar-header-row">
-          <div v-if="showRuntimeToggle" class="runtime-toggle">
-            <button
-              class="runtime-btn"
-              :class="{ active: activeRuntime === 'docker' }"
-              @click="setRuntime('docker')"
-            >
-              Docker
-            </button>
-            <button
-              class="runtime-btn"
-              :class="{ active: activeRuntime === 'kubernetes' }"
-              @click="setRuntime('kubernetes')"
-            >
-              Kubernetes
-            </button>
-          </div>
+        <div class="sidebar-header-top">
+          <span class="label-caps">Log Resources</span>
           <div class="sidebar-controls">
             <button
               class="mini-icon-btn"
@@ -100,76 +84,322 @@
             </button>
           </div>
         </div>
+
+        <div v-if="showRuntimeToggle" class="runtime-toggle">
+          <button
+            class="runtime-btn"
+            :class="{ active: activeRuntime === 'docker' }"
+            @click="setRuntime('docker')"
+          >
+            Docker
+          </button>
+          <button
+            v-if="hasSwarmSupport"
+            class="runtime-btn"
+            :class="{ active: activeRuntime === 'swarm' }"
+            @click="setRuntime('swarm')"
+          >
+            Swarm
+          </button>
+          <button
+            v-if="kubernetesEnabled()"
+            class="runtime-btn"
+            :class="{ active: activeRuntime === 'kubernetes' }"
+            @click="setRuntime('kubernetes')"
+          >
+            Kubernetes
+          </button>
+        </div>
       </div>
 
-      <div class="resource-list">
+      <div class="resource-list tree-resource-list">
+        <!-- DOCKER RUNTIME: STANDALONE DOCKER CONTAINERS ONLY -->
         <template v-if="dockerEnabled() && activeRuntime === 'docker'">
-          <div v-if="kubernetesEnabled()" class="resource-section-label">Docker</div>
-          <div
-            v-for="c in filteredContainers"
-            :key="c.id"
-            class="resource-card group"
-            :class="{ active: isContainerVisible(c.id) }"
-            @click="toggleContainerStream(c.id)"
-            @mouseenter="startLiveStats(c.id)"
-            @mouseleave="stopLiveStats"
-          >
-            <div class="card-status-dot" :class="c.state"></div>
-            <div class="card-info">
-              <span class="card-name">{{ c.name }}</span>
-              <span class="card-image-tag">{{ c.image }}</span>
+          <div class="tree-group all-containers-group">
+            <div
+              class="tree-group-header"
+              @click="allContainersCollapsed = !allContainersCollapsed"
+            >
+              <div class="header-main-side">
+                <svg
+                  class="chevron-arrow"
+                  :class="{ collapsed: allContainersCollapsed }"
+                  viewBox="0 0 24 24"
+                  width="12"
+                  height="12"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="3"
+                >
+                  <polyline points="6 9 12 15 18 9"></polyline>
+                </svg>
+                <!-- Cube / Package icon matching reference -->
+                <svg
+                  class="group-type-icon box-icon"
+                  viewBox="0 0 24 24"
+                  width="16"
+                  height="16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+                  <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+                  <line x1="12" y1="22.08" x2="12" y2="12"></line>
+                </svg>
+                <span class="group-title">All Containers</span>
+              </div>
+              <span class="group-count">{{ filteredStandaloneContainers.length }}</span>
             </div>
 
-            <div v-if="c.state === 'running'" class="stats-peek-inline">
-              <div class="peek-stat">
-                <span
-                  class="p-value"
-                  :class="{ 'text-live': activeLiveId === c.id }"
-                >
-                  {{
-                    (activeLiveId === c.id ? liveStats.cpu : c.cpu)?.toFixed(2) ||
-                    "0.00"
-                  }}%
-                </span>
+            <!-- Standalone Containers List -->
+            <div v-if="!allContainersCollapsed" class="tree-group-children">
+              <div
+                v-for="c in filteredStandaloneContainers"
+                :key="c.id"
+                class="tree-item container-item"
+                :class="{ active: isContainerVisible(c.id) }"
+                @click="toggleContainerStream(c.id)"
+                @mouseenter="handleContainerMouseEnter(c, $event)"
+                @mouseleave="handleContainerMouseLeave"
+              >
+                <div class="tree-item-icon-wrapper">
+                  <!-- Cylinder/Container database-style icon matching reference -->
+                  <svg
+                    class="item-icon container-cylinder-icon"
+                    viewBox="0 0 24 24"
+                    width="16"
+                    height="16"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                  >
+                    <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
+                    <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path>
+                    <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path>
+                  </svg>
+                  <span
+                    class="mini-status-dot"
+                    :class="c.state"
+                  ></span>
+                </div>
+                <span class="tree-item-name truncate">{{ c.name }}</span>
               </div>
-              <div class="peek-stat">
-                <span
-                  class="p-value"
-                  :class="{ 'text-live': activeLiveId === c.id }"
-                >
-                  {{
-                    formatBytes(
-                      activeLiveId === c.id ? liveStats.memory : c.memory,
-                    )
-                  }}
-                </span>
+
+              <div v-if="filteredStandaloneContainers.length === 0" class="empty-search-msg">
+                <p class="text-mute">No standalone containers</p>
               </div>
             </div>
-          </div>
-          <div v-if="filteredContainers.length === 0" class="empty-search-msg">
-            <p class="text-mute">No containers found</p>
           </div>
         </template>
 
-        <template v-if="kubernetesEnabled() && activeRuntime === 'kubernetes'">
-          <div v-if="dockerEnabled()" class="resource-section-label">Kubernetes</div>
+        <!-- SWARM RUNTIME: SWARM STACKS, SERVICES & TASK CONTAINERS -->
+        <template v-if="activeRuntime === 'swarm'">
           <div
-            v-for="pod in filteredPods"
-            :key="podKey(pod)"
-            class="resource-card group"
-            :class="{ active: isPodVisible(pod) }"
-            @click="togglePodStream(pod)"
+            v-for="grp in swarmGroups"
+            :key="'swarm-group-' + grp.name"
+            class="tree-group swarm-tree-group"
           >
-            <div class="card-status-dot" :class="(pod.phase || '').toLowerCase()"></div>
-            <div class="card-info">
-              <span class="card-name">{{ pod.name }}</span>
-              <span class="card-image-tag">{{ pod.namespace }}</span>
+            <div
+              class="tree-group-header"
+              @click="toggleSwarmCollapse(grp.name)"
+            >
+              <div class="header-main-side">
+                <svg
+                  class="chevron-arrow"
+                  :class="{ collapsed: swarmCollapsed[grp.name] }"
+                  viewBox="0 0 24 24"
+                  width="12"
+                  height="12"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="3"
+                >
+                  <polyline points="6 9 12 15 18 9"></polyline>
+                </svg>
+                <!-- Swarm Stack Icon (layers) -->
+                <svg
+                  class="group-type-icon swarm-icon"
+                  viewBox="0 0 24 24"
+                  width="16"
+                  height="16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+                  <polyline points="2 17 12 22 22 17"></polyline>
+                  <polyline points="2 12 12 17 22 12"></polyline>
+                </svg>
+                <span class="group-title">{{ grp.name }}</span>
+              </div>
+              <span class="group-count">{{ grp.containers.length || grp.services.length }}</span>
             </div>
-            <div class="stats-peek-inline">
-              <span class="p-value">{{ pod.ready }}</span>
+
+            <!-- Swarm Containers & Services within this Stack -->
+            <div v-if="!swarmCollapsed[grp.name]" class="tree-group-children">
+              <!-- Swarm Service Log shortcut if available -->
+              <div
+                v-for="svc in grp.services"
+                :key="'svc-' + svc.id"
+                class="tree-item service-item"
+                :class="{ active: isServiceVisible(svc.id) }"
+                @click="toggleServiceStream(svc.id)"
+                :title="svc.name + ' (All replicas aggregated stream)'"
+              >
+                <div class="tree-item-icon-wrapper">
+                  <!-- Service aggregate icon -->
+                  <svg
+                    class="item-icon svc-icon"
+                    viewBox="0 0 24 24"
+                    width="15"
+                    height="15"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
+                    <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
+                    <line x1="6" y1="6" x2="6.01" y2="6"></line>
+                    <line x1="6" y1="18" x2="6.01" y2="18"></line>
+                  </svg>
+                  <span
+                    class="mini-status-dot"
+                    :class="svc.running === svc.replicas && svc.replicas > 0 ? 'running' : (svc.running > 0 ? 'partial' : 'stopped')"
+                  ></span>
+                </div>
+                <div class="tree-item-name">
+                  <span>{{ svc.name }}</span>
+                  <span class="mini-tag">svc</span>
+                </div>
+              </div>
+
+              <!-- Swarm Task Containers -->
+              <div
+                v-for="c in grp.containers"
+                :key="c.id"
+                class="tree-item container-item"
+                :class="{ active: isContainerVisible(c.id) }"
+                @click="toggleContainerStream(c.id)"
+                @mouseenter="handleContainerMouseEnter(c, $event)"
+                @mouseleave="handleContainerMouseLeave"
+              >
+                <div class="tree-item-icon-wrapper">
+                  <!-- Cylinder/Container database-style icon matching reference -->
+                  <svg
+                    class="item-icon container-cylinder-icon"
+                    viewBox="0 0 24 24"
+                    width="16"
+                    height="16"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                  >
+                    <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
+                    <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path>
+                    <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path>
+                  </svg>
+                  <span
+                    class="mini-status-dot"
+                    :class="c.state"
+                  ></span>
+                </div>
+                <span class="tree-item-name truncate">{{ c.name }}</span>
+              </div>
             </div>
           </div>
-          <div v-if="filteredPods.length === 0" class="empty-search-msg">
+
+          <div v-if="swarmGroups.length === 0" class="empty-search-msg">
+            <p class="text-mute">No swarm services or stacks found</p>
+          </div>
+        </template>
+
+        <!-- KUBERNETES RUNTIME: NAMESPACES & PODS (TREE-VIEW STYLED) -->
+        <template v-if="kubernetesEnabled() && activeRuntime === 'kubernetes'">
+          <div
+            v-for="grp in k8sNamespaceGroups"
+            :key="'k8s-ns-' + grp.namespace"
+            class="tree-group k8s-tree-group"
+          >
+            <div
+              class="tree-group-header"
+              @click="toggleK8sCollapse(grp.namespace)"
+            >
+              <div class="header-main-side">
+                <svg
+                  class="chevron-arrow"
+                  :class="{ collapsed: k8sCollapsed[grp.namespace] }"
+                  viewBox="0 0 24 24"
+                  width="12"
+                  height="12"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="3"
+                >
+                  <polyline points="6 9 12 15 18 9"></polyline>
+                </svg>
+                <!-- Kubernetes wheel icon -->
+                <svg
+                  class="group-type-icon k8s-icon"
+                  viewBox="0 0 24 24"
+                  width="16"
+                  height="16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <circle cx="12" cy="12" r="9"></circle>
+                  <circle cx="12" cy="12" r="3"></circle>
+                  <line x1="12" y1="3" x2="12" y2="9"></line>
+                  <line x1="12" y1="15" x2="12" y2="21"></line>
+                  <line x1="4.2" y1="7.5" x2="9.4" y2="10.5"></line>
+                  <line x1="14.6" y1="13.5" x2="19.8" y2="16.5"></line>
+                  <line x1="4.2" y1="16.5" x2="9.4" y2="13.5"></line>
+                  <line x1="14.6" y1="10.5" x2="19.8" y2="7.5"></line>
+                </svg>
+                <span class="group-title">{{ grp.namespace }}</span>
+              </div>
+              <span class="group-count">{{ grp.pods.length }}</span>
+            </div>
+
+            <!-- Pods inside namespace -->
+            <div v-if="!k8sCollapsed[grp.namespace]" class="tree-group-children">
+              <div
+                v-for="pod in grp.pods"
+                :key="podKey(pod)"
+                class="tree-item container-item"
+                :class="{ active: isPodVisible(pod) }"
+                @click="togglePodStream(pod)"
+                :title="pod.name"
+              >
+                <div class="tree-item-icon-wrapper">
+                  <!-- Cylinder/pod container icon matching Docker & Swarm -->
+                  <svg
+                    class="item-icon container-cylinder-icon"
+                    viewBox="0 0 24 24"
+                    width="16"
+                    height="16"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                  >
+                    <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
+                    <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path>
+                    <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path>
+                  </svg>
+                  <span
+                    class="mini-status-dot"
+                    :class="(pod.phase || '').toLowerCase() === 'running' ? 'running' : 'stopped'"
+                  ></span>
+                </div>
+                <div class="tree-item-name">
+                  <span class="truncate">{{ pod.name }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="k8sNamespaceGroups.length === 0" class="empty-search-msg">
             <p class="text-mute">No pods found</p>
           </div>
         </template>
@@ -213,6 +443,7 @@
           :key="stream.key"
           :container="stream.type === 'container' ? stream.data : undefined"
           :pod="stream.type === 'pod' ? stream.data : undefined"
+          :service="stream.type === 'service' ? stream.data : undefined"
           showClose
           @close="removeStream(stream)"
           @stats="handleViewerStats"
@@ -270,17 +501,31 @@
         </div>
       </div>
     </main>
+
+    <!-- Interactive Container Hover Card -->
+    <Teleport to="body">
+      <ContainerHoverCard
+        :visible="isHoverCardActive"
+        :container="hoveredContainer"
+        :stats="liveStats"
+        :position="hoverPosition"
+        @card-mouseenter="handleCardMouseEnter"
+        @card-mouseleave="handleCardMouseLeave"
+      />
+    </Teleport>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { sharedState, dockerEnabled, kubernetesEnabled } from "../utils/sharedState";
+import { sharedState, dockerEnabled, kubernetesEnabled, swarmEnabled, showToast } from "../utils/sharedState";
 import { parsePodKey } from "../utils/logRoutes";
 import { usePods } from "../composables/usePods";
+import { useSwarm } from "../composables/useSwarm";
 import { secureStorage } from "../utils/storage";
 import { apiFetch } from "../utils/apiFetch";
+import ContainerHoverCard from "../components/ContainerHoverCard.vue";
 import LogViewer from "../components/LogViewer.vue";
 
 const route = useRoute();
@@ -296,11 +541,16 @@ const formatBytes = (bytes) => {
 
 const containers = ref([]);
 const { pods } = usePods({ autoPoll: false });
+const { swarmServices, fetchSwarmData } = useSwarm();
 
 const podKey = (pod) => `${pod.namespace}/${pod.name}`;
 
 // Live Stats on Hover Logic
 const activeLiveId = ref(null);
+const hoveredContainer = ref(null);
+const hoverPosition = ref({ top: 0, left: 0 });
+const isHoverCardActive = ref(false);
+let hoverLeaveTimeout = null;
 const liveStats = ref({ cpu: 0, memory: 0 });
 let liveInterval = null;
 
@@ -308,6 +558,43 @@ const handleViewerStats = (data) => {
   if (data.id === activeLiveId.value) {
     liveStats.value = { cpu: data.cpu, memory: data.memory };
   }
+};
+
+const handleContainerMouseEnter = (c, event) => {
+  if (hoverLeaveTimeout) {
+    clearTimeout(hoverLeaveTimeout);
+    hoverLeaveTimeout = null;
+  }
+  hoveredContainer.value = c;
+  if (event && event.currentTarget) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const top = Math.max(10, Math.min(window.innerHeight - 350, rect.top));
+    const left = rect.right + 12;
+    hoverPosition.value = { top, left };
+  }
+  isHoverCardActive.value = true;
+  startLiveStats(c.id);
+};
+
+const handleContainerMouseLeave = () => {
+  hoverLeaveTimeout = setTimeout(() => {
+    isHoverCardActive.value = false;
+    hoveredContainer.value = null;
+    stopLiveStats();
+  }, 220);
+};
+
+const handleCardMouseEnter = () => {
+  if (hoverLeaveTimeout) {
+    clearTimeout(hoverLeaveTimeout);
+    hoverLeaveTimeout = null;
+  }
+};
+
+const handleCardMouseLeave = () => {
+  isHoverCardActive.value = false;
+  hoveredContainer.value = null;
+  stopLiveStats();
 };
 
 const startLiveStats = (id) => {
@@ -338,13 +625,109 @@ const fetchStatsNow = async (id) => {
   }
 };
 
+const containerScope = ref('all'); // 'all', 'docker', 'swarm'
+
+const hasSwarmContainers = computed(() => {
+  return containers.value.some((c) => c.is_swarm) || swarmServices.value.length > 0;
+});
+
 const filteredContainers = computed(() => {
-  if (!sharedState.searchQuery) return containers.value;
+  let list = containers.value;
+  if (containerScope.value === 'docker') {
+    list = list.filter((c) => !c.is_swarm);
+  } else if (containerScope.value === 'swarm') {
+    list = list.filter((c) => c.is_swarm);
+  }
+
+  if (!sharedState.searchQuery) return list;
   const q = sharedState.searchQuery.toLowerCase();
-  return containers.value.filter(
-    (c) => c.name.toLowerCase().includes(q) || c.id.toLowerCase().includes(q),
+  return list.filter(
+    (c) =>
+      c.name.toLowerCase().includes(q) ||
+      c.id.toLowerCase().includes(q) ||
+      (c.swarm_service && c.swarm_service.toLowerCase().includes(q)),
   );
 });
+
+const swarmCollapsed = ref({});
+const allContainersCollapsed = ref(false);
+
+const toggleSwarmCollapse = (groupName) => {
+  swarmCollapsed.value[groupName] = !swarmCollapsed.value[groupName];
+};
+
+const standaloneContainers = computed(() => {
+  return containers.value.filter((c) => !c.is_swarm);
+});
+
+const filteredStandaloneContainers = computed(() => {
+  let list = standaloneContainers.value;
+  if (!sharedState.searchQuery) return list;
+  const q = sharedState.searchQuery.toLowerCase();
+  return list.filter(
+    (c) =>
+      c.name.toLowerCase().includes(q) ||
+      c.id.toLowerCase().includes(q) ||
+      c.image.toLowerCase().includes(q)
+  );
+});
+
+// Group swarm containers and services under their stack / service family
+const swarmGroups = computed(() => {
+  const groupsMap = {};
+  const q = (sharedState.searchQuery || "").toLowerCase();
+
+  // Swarm containers
+  containers.value.filter((c) => c.is_swarm).forEach((c) => {
+    // Determine group/stack name: e.g. "adminer-swarm_adminer.1..." -> "adminer-swarm"
+    let groupName = c.swarm_service || "swarm";
+    if (groupName.includes("_")) {
+      groupName = groupName.split("_")[0];
+    }
+    if (!groupsMap[groupName]) {
+      groupsMap[groupName] = {
+        name: groupName,
+        services: [],
+        containers: [],
+      };
+    }
+    if (!q || c.name.toLowerCase().includes(q) || c.id.toLowerCase().includes(q) || (c.swarm_service && c.swarm_service.toLowerCase().includes(q))) {
+      groupsMap[groupName].containers.push(c);
+    }
+  });
+
+  // Also include Swarm services if present
+  swarmServices.value.forEach((s) => {
+    let groupName = s.name || "swarm";
+    if (groupName.includes("_")) {
+      groupName = groupName.split("_")[0];
+    }
+    if (!groupsMap[groupName]) {
+      groupsMap[groupName] = {
+        name: groupName,
+        services: [],
+        containers: [],
+      };
+    }
+    if (!q || s.name.toLowerCase().includes(q) || s.id.toLowerCase().includes(q) || s.image.toLowerCase().includes(q)) {
+      groupsMap[groupName].services.push(s);
+    }
+  });
+
+  return Object.values(groupsMap).filter((g) => g.containers.length > 0 || g.services.length > 0);
+});
+
+const filteredSwarmServices = computed(() => {
+  if (!sharedState.searchQuery) return swarmServices.value;
+  const q = sharedState.searchQuery.toLowerCase();
+  return swarmServices.value.filter(
+    (s) =>
+      s.name.toLowerCase().includes(q) ||
+      s.id.toLowerCase().includes(q) ||
+      s.image.toLowerCase().includes(q)
+  );
+});
+
 const filteredPods = computed(() => {
   if (!sharedState.searchQuery) return pods.value;
   const q = sharedState.searchQuery.toLowerCase();
@@ -356,19 +739,53 @@ const filteredPods = computed(() => {
   );
 });
 
+const k8sCollapsed = ref({});
+const toggleK8sCollapse = (namespace) => {
+  k8sCollapsed.value[namespace] = !k8sCollapsed.value[namespace];
+};
+
+const k8sNamespaceGroups = computed(() => {
+  const groupsMap = {};
+  filteredPods.value.forEach((p) => {
+    const ns = p.namespace || "default";
+    if (!groupsMap[ns]) {
+      groupsMap[ns] = {
+        namespace: ns,
+        pods: [],
+      };
+    }
+    groupsMap[ns].pods.push(p);
+  });
+  return Object.values(groupsMap);
+});
+
 const selectedContainerIds = ref([]);
 const selectedPodKeys = ref([]);
+const selectedServiceIds = ref([]);
 const isSidebarHidden = ref(window.innerWidth < 1024);
 const splitView = ref(route.query.split === "true");
 const activeRuntime = ref(dockerEnabled() ? "docker" : "kubernetes");
 
-const showRuntimeToggle = computed(
-  () => dockerEnabled() && kubernetesEnabled(),
-);
+const hasSwarmSupport = computed(() => {
+  return swarmEnabled() || sharedState.swarmActive || hasSwarmContainers.value;
+});
+
+const showRuntimeToggle = computed(() => {
+  let count = 0;
+  if (dockerEnabled()) count++;
+  if (hasSwarmSupport.value) count++;
+  if (kubernetesEnabled()) count++;
+  return count > 1;
+});
 
 const syncStateFromUrl = () => {
   const containerParam = route.query.c;
-  const podParam = route.query.p;
+  let podParam = route.query.p;
+  // Handle fallback params if navigated from older links: k8s_ns & k8s_pod
+  if (!podParam && route.query.k8s_ns && route.query.k8s_pod) {
+    podParam = `${route.query.k8s_ns}/${route.query.k8s_pod}`;
+  }
+  const serviceParam = route.query.s || route.query.service;
 
   selectedContainerIds.value = containerParam
     ? String(containerParam).split(",").filter(Boolean)
@@ -376,21 +793,35 @@ const syncStateFromUrl = () => {
   selectedPodKeys.value = podParam
     ? String(podParam).split(",").filter(Boolean)
     : [];
+  selectedServiceIds.value = serviceParam
+    ? String(serviceParam).split(",").filter(Boolean)
+    : [];
 
   splitView.value = route.query.split === "true";
   if (showRuntimeToggle.value) {
     const rt = String(route.query.rt || "").toLowerCase();
-    if (rt === "kubernetes" || rt === "docker") {
+    if (rt === "kubernetes" || rt === "docker" || rt === "swarm") {
       activeRuntime.value = rt;
     } else if (selectedPodKeys.value.length > 0) {
       activeRuntime.value = "kubernetes";
+    } else if (selectedServiceIds.value.length > 0) {
+      activeRuntime.value = "swarm";
     } else if (selectedContainerIds.value.length > 0) {
-      activeRuntime.value = "docker";
+      const match = containers.value.find(
+        (c) =>
+          selectedContainerIds.value.includes(c.id) ||
+          selectedContainerIds.value.some((id) => c.id.startsWith(id) || id.startsWith(c.id)),
+      );
+      if (match?.is_swarm) {
+        activeRuntime.value = "swarm";
+      } else if (match) {
+        activeRuntime.value = "docker";
+      }
     } else {
-      activeRuntime.value = dockerEnabled() ? "docker" : "kubernetes";
+      activeRuntime.value = dockerEnabled() ? "docker" : (hasSwarmSupport.value ? "swarm" : "kubernetes");
     }
   } else {
-    activeRuntime.value = dockerEnabled() ? "docker" : "kubernetes";
+    activeRuntime.value = dockerEnabled() ? "docker" : (hasSwarmSupport.value ? "swarm" : "kubernetes");
   }
 };
 
@@ -432,6 +863,25 @@ const displayPods = computed(() => {
   return splitView.value ? ordered.slice(-2) : [ordered[ordered.length - 1]].filter(Boolean);
 });
 
+const displayServices = computed(() => {
+  if (selectedServiceIds.value.length === 0) {
+    return [];
+  }
+
+  const ordered = selectedServiceIds.value
+    .map((id) => {
+      let match = swarmServices.value.find((s) => s.id === id);
+      if (!match) {
+        match = swarmServices.value.find((s) => s.id.startsWith(id) || s.name === id);
+      }
+      if (match) return match;
+      return { id, name: id, running: 1, replicas: 1 };
+    })
+    .filter(Boolean);
+
+  return splitView.value ? ordered.slice(-2) : [ordered[ordered.length - 1]].filter(Boolean);
+});
+
 const displayStreams = computed(() => {
   const streams = [
     ...displayContainers.value.map((container) => ({
@@ -444,14 +894,19 @@ const displayStreams = computed(() => {
       key: `pod:${podKey(pod)}`,
       data: pod,
     })),
+    ...displayServices.value.map((service) => ({
+      type: "service",
+      key: `service:${service.id}`,
+      data: service,
+    })),
   ];
   return splitView.value ? streams.slice(-2) : streams.slice(-1);
 });
 
 watch(
-  () => [containers.value, pods.value],
+  () => [containers.value, pods.value, swarmServices.value],
   () => {
-    if (selectedContainerIds.value.length > 0 || selectedPodKeys.value.length > 0) {
+    if (selectedContainerIds.value.length > 0 || selectedPodKeys.value.length > 0 || selectedServiceIds.value.length > 0) {
       syncStateFromUrl();
     }
   },
@@ -462,9 +917,88 @@ const isContainerVisible = (id) =>
   displayContainers.value.some((c) => c.id === id);
 const isPodVisible = (pod) =>
   displayPods.value.some((item) => podKey(item) === podKey(pod));
+const isServiceVisible = (serviceId) =>
+  displayServices.value.some((s) => s.id === serviceId);
+
 const gridClass = computed(() =>
   displayStreams.value.length > 1 ? "grid-dual" : "grid-single",
 );
+
+let previousContainersMap = new Map();
+let followTransitionTimers = new Map();
+
+const handleContainerRecreationTracking = (newContainersList) => {
+  if (!Array.isArray(newContainersList)) return;
+  const followMode = sharedState.generalSettings?.followRecreated || "delayed";
+  if (followMode === "never") {
+    // Update map without auto-following
+    previousContainersMap = new Map(newContainersList.map((c) => [c.id, c]));
+    return;
+  }
+
+  // Check each currently selected container
+  if (selectedContainerIds.value.length > 0 && previousContainersMap.size > 0) {
+    const updatedIds = [...selectedContainerIds.value];
+    let changed = false;
+
+    selectedContainerIds.value.forEach((currentId, index) => {
+      // Check if currentId exists in new list
+      const stillExists = newContainersList.some(
+        (c) => c.id === currentId || c.id.startsWith(currentId) || currentId.startsWith(c.id)
+      );
+
+      if (!stillExists) {
+        // Container was stopped or recreated. Find previous container details
+        const prevContainer = previousContainersMap.get(currentId) ||
+          Array.from(previousContainersMap.values()).find(
+            (c) => c.id === currentId || c.id.startsWith(currentId) || currentId.startsWith(c.id)
+          );
+
+        if (prevContainer && prevContainer.name) {
+          // Look for new container with matching name
+          const replacement = newContainersList.find(
+            (c) => c.name === prevContainer.name && c.id !== currentId
+          );
+
+          if (replacement) {
+            const doSwitch = () => {
+              if (selectedContainerIds.value[index] === currentId) {
+                selectedContainerIds.value[index] = replacement.id;
+                updateUrl();
+                showToast(
+                  "Container Recreated",
+                  `Following ${replacement.name} (${replacement.id.substring(0, 12)})`,
+                  "info"
+                );
+              }
+            };
+
+            if (followMode === "immediate") {
+              doSwitch();
+              changed = true;
+            } else if (followMode === "delayed") {
+              // Delayed (Smooth): wait 1500ms before seamlessly switching
+              if (!followTransitionTimers.has(currentId)) {
+                showToast(
+                  "Recreation Detected",
+                  `Switching to new ${replacement.name} container in 1.5s...`,
+                  "info"
+                );
+                const timer = setTimeout(() => {
+                  followTransitionTimers.delete(currentId);
+                  doSwitch();
+                }, 1500);
+                followTransitionTimers.set(currentId, timer);
+              }
+            }
+          }
+        }
+      }
+    });
+  }
+
+  previousContainersMap = new Map(newContainersList.map((c) => [c.id, c]));
+};
 
 const fetchContainers = async () => {
   try {
@@ -473,7 +1007,9 @@ const fetchContainers = async () => {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (res.ok) {
-      containers.value = await res.json();
+      const data = await res.json();
+      handleContainerRecreationTracking(data);
+      containers.value = data;
     }
   } catch (err) {
     console.error(err);
@@ -489,6 +1025,7 @@ const fetchPodsForLogs = async () => {
     });
     if (!nsRes.ok) return;
     const namespaces = await nsRes.json();
+    if (!Array.isArray(namespaces)) return;
     const results = await Promise.all(
       namespaces.map(async ({ name }) => {
         const res = await apiFetch(
@@ -509,6 +1046,7 @@ const fetchResources = async () => {
   const tasks = [];
   if (dockerEnabled()) tasks.push(fetchContainers());
   if (kubernetesEnabled()) tasks.push(fetchPodsForLogs());
+  if (swarmEnabled() || sharedState.swarmActive) tasks.push(fetchSwarmData());
   await Promise.all(tasks);
   syncStateFromUrl();
   ensureUrlReflectsSelection();
@@ -517,12 +1055,23 @@ const fetchResources = async () => {
 const ensureUrlReflectsSelection = () => {
   if (!showRuntimeToggle.value) return;
 
-  const expectedRt =
-    selectedPodKeys.value.length > 0
-      ? "kubernetes"
-      : selectedContainerIds.value.length > 0
-        ? "docker"
-        : activeRuntime.value;
+  let expectedRt = activeRuntime.value;
+  if (selectedPodKeys.value.length > 0) {
+    expectedRt = "kubernetes";
+  } else if (selectedServiceIds.value.length > 0) {
+    expectedRt = "swarm";
+  } else if (selectedContainerIds.value.length > 0) {
+    const match = containers.value.find(
+      (c) =>
+        selectedContainerIds.value.includes(c.id) ||
+        selectedContainerIds.value.some((id) => c.id.startsWith(id) || id.startsWith(c.id)),
+    );
+    if (match?.is_swarm) {
+      expectedRt = "swarm";
+    } else if (match) {
+      expectedRt = "docker";
+    }
+  }
 
   const expectedP =
     selectedPodKeys.value.length > 0
@@ -532,17 +1081,24 @@ const ensureUrlReflectsSelection = () => {
     selectedContainerIds.value.length > 0
       ? selectedContainerIds.value.join(",")
       : "";
+  const expectedS =
+    selectedServiceIds.value.length > 0
+      ? selectedServiceIds.value.join(",")
+      : "";
 
   const currentRt = String(route.query.rt || "");
   const currentP = String(route.query.p || "");
   const currentC = String(route.query.c || "");
+  const currentS = String(route.query.s || route.query.service || "");
 
   if (
     currentRt !== expectedRt ||
     (expectedP && currentP !== expectedP) ||
     (expectedC && currentC !== expectedC) ||
+    (expectedS && currentS !== expectedS) ||
     (!expectedP && currentP) ||
-    (!expectedC && currentC)
+    (!expectedC && currentC) ||
+    (!expectedS && currentS)
   ) {
     updateUrl();
   }
@@ -563,6 +1119,14 @@ const updateUrl = () => {
     delete query.p;
   }
 
+  if (selectedServiceIds.value.length > 0) {
+    query.s = selectedServiceIds.value.join(",");
+    delete query.service;
+  } else {
+    delete query.s;
+    delete query.service;
+  }
+
   if (splitView.value) {
     query.split = "true";
   } else {
@@ -580,11 +1144,12 @@ const updateUrl = () => {
 
 const setRuntime = (runtime) => {
   if (!showRuntimeToggle.value) return;
-  if (runtime !== "docker" && runtime !== "kubernetes") return;
+  if (runtime !== "docker" && runtime !== "kubernetes" && runtime !== "swarm") return;
   if (activeRuntime.value === runtime) return;
   activeRuntime.value = runtime;
   selectedContainerIds.value = [];
   selectedPodKeys.value = [];
+  selectedServiceIds.value = [];
   updateUrl();
 };
 
@@ -598,14 +1163,44 @@ const toggleContainerStream = (id) => {
     if (selectedContainerIds.value.includes(id)) {
       selectedContainerIds.value = selectedContainerIds.value.filter((sid) => sid !== id);
     } else {
-      if (selectedContainerIds.value.length >= 2) {
-        selectedContainerIds.value.shift();
+      if (selectedContainerIds.value.length + selectedServiceIds.value.length >= 2) {
+        if (selectedServiceIds.value.length > 0) {
+          selectedServiceIds.value.shift();
+        } else {
+          selectedContainerIds.value.shift();
+        }
       }
       selectedContainerIds.value.push(id);
     }
   } else {
     selectedPodKeys.value = [];
+    selectedServiceIds.value = [];
     selectedContainerIds.value = selectedContainerIds.value.includes(id) ? [] : [id];
+  }
+  if (window.innerWidth < 900) {
+    isSidebarHidden.value = true;
+  }
+  updateUrl();
+};
+
+const toggleServiceStream = (serviceId) => {
+  if (splitView.value) {
+    if (selectedServiceIds.value.includes(serviceId)) {
+      selectedServiceIds.value = selectedServiceIds.value.filter((sid) => sid !== serviceId);
+    } else {
+      if (selectedContainerIds.value.length + selectedServiceIds.value.length >= 2) {
+        if (selectedContainerIds.value.length > 0) {
+          selectedContainerIds.value.shift();
+        } else {
+          selectedServiceIds.value.shift();
+        }
+      }
+      selectedServiceIds.value.push(serviceId);
+    }
+  } else {
+    selectedPodKeys.value = [];
+    selectedContainerIds.value = [];
+    selectedServiceIds.value = selectedServiceIds.value.includes(serviceId) ? [] : [serviceId];
   }
   if (window.innerWidth < 900) {
     isSidebarHidden.value = true;
@@ -626,6 +1221,7 @@ const togglePodStream = (pod) => {
     }
   } else {
     selectedContainerIds.value = [];
+    selectedServiceIds.value = [];
     selectedPodKeys.value = selectedPodKeys.value.includes(key) ? [] : [key];
   }
   if (window.innerWidth < 900) {
@@ -637,6 +1233,10 @@ const togglePodStream = (pod) => {
 const removeStream = (stream) => {
   if (stream.type === "container") {
     selectedContainerIds.value = selectedContainerIds.value.filter(
+      (sid) => sid !== stream.data.id,
+    );
+  } else if (stream.type === "service") {
+    selectedServiceIds.value = selectedServiceIds.value.filter(
       (sid) => sid !== stream.data.id,
     );
   } else {
@@ -651,11 +1251,16 @@ let statusInterval = null;
 
 onMounted(() => {
   fetchResources();
-  statusInterval = setInterval(fetchResources, 5000);
+  statusInterval = setInterval(() => {
+    if (typeof document !== 'undefined' && document.hidden) return;
+    fetchResources();
+  }, 5000);
 });
 
 onUnmounted(() => {
   if (statusInterval) clearInterval(statusInterval);
+  followTransitionTimers.forEach((timer) => clearTimeout(timer));
+  followTransitionTimers.clear();
 });
 
 watch(() => route.query, syncStateFromUrl, { immediate: true });
@@ -763,6 +1368,13 @@ watch(() => route.query, syncStateFromUrl, { immediate: true });
   margin-bottom: 1.25rem;
 }
 
+.sidebar-header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
 .label-caps {
   text-transform: uppercase;
   font-size: 0.75rem;
@@ -868,12 +1480,55 @@ watch(() => route.query, syncStateFromUrl, { immediate: true });
   box-shadow: 0 0 10px var(--success);
 }
 
+.card-status-dot.partial {
+  background: var(--warning);
+  box-shadow: 0 0 10px var(--warning);
+}
+
+.service-card {
+  border-left: 3px solid var(--accent);
+}
+
+.swarm-header-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.count-pill {
+  font-size: 0.65rem;
+  background: var(--bg-input);
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  color: var(--text-mute);
+  border: 1px solid var(--border);
+}
+
+.service-tag {
+  font-size: 0.6rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  background: rgba(56, 189, 248, 0.18);
+  color: #38bdf8;
+  flex-shrink: 0;
+}
+
 .card-info {
   display: flex;
   flex-direction: column;
   overflow: hidden;
   min-width: 0;
   flex: 1;
+}
+
+.card-name-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
 }
 
 .card-name {
@@ -884,7 +1539,53 @@ watch(() => route.query, syncStateFromUrl, { immediate: true });
   overflow: hidden !important;
   text-overflow: ellipsis !important;
   display: block;
-  max-width: 100%;
+  min-width: 0;
+  flex: 1;
+}
+
+.swarm-tag {
+  font-size: 0.6rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  background: rgba(var(--accent-rgb), 0.18);
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.scope-toggle-pills {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.25rem;
+  margin-bottom: 0.65rem;
+  border-radius: 8px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+}
+
+.scope-pill {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--text-mute);
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0.3rem 0;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: center;
+}
+
+.scope-pill:hover {
+  color: var(--text-main);
+}
+
+.scope-pill.active {
+  background: var(--accent);
+  color: #fff;
 }
 
 .card-image-tag {
@@ -1075,28 +1776,34 @@ watch(() => route.query, syncStateFromUrl, { immediate: true });
 }
 
 .runtime-toggle {
-  display: inline-flex;
+  display: flex;
+  width: 100%;
   gap: 0.25rem;
-  padding: 0.2rem;
+  padding: 0.25rem;
   border-radius: 8px;
   border: 1px solid var(--border);
   background: var(--bg-input);
 }
 
 .runtime-btn {
+  flex: 1;
+  text-align: center;
   border: none;
   background: transparent;
   color: var(--text-mute);
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   font-weight: 800;
-  padding: 0.3rem 0.5rem;
+  padding: 0.35rem 0.4rem;
   border-radius: 6px;
   cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
 }
 
 .runtime-btn.active {
   background: var(--accent);
   color: #fff;
+  box-shadow: 0 2px 8px rgba(var(--accent-rgb), 0.25);
 }
 
 @media (max-width: 1024px) {
@@ -1301,4 +2008,173 @@ watch(() => route.query, syncStateFromUrl, { immediate: true });
     max-width: none;
   }
 }
+
+/* TREE VIEW SIDEBAR STYLING MATCHING REFERENCE */
+.tree-resource-list {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.tree-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.tree-group-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.45rem 0.6rem;
+  border-radius: 6px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s ease;
+}
+
+.tree-group-header:hover {
+  background: var(--bg-subtle);
+}
+
+.header-main-side {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  color: var(--text-main);
+}
+
+.chevron-arrow {
+  color: var(--text-mute);
+  transition: transform 0.2s ease;
+}
+
+.chevron-arrow.collapsed {
+  transform: rotate(-90deg);
+}
+
+.group-type-icon {
+  color: var(--text-mute);
+  flex-shrink: 0;
+}
+
+.group-title {
+  font-size: 0.88rem;
+  font-weight: 800;
+  color: var(--text-main);
+  letter-spacing: -0.01em;
+}
+
+.group-count {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-mute);
+}
+
+.tree-group-children {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding-left: 0.75rem;
+  margin-top: 0.15rem;
+}
+
+.tree-item {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.45rem 0.65rem;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  color: var(--text-dim);
+}
+
+.tree-item:hover {
+  background: var(--bg-subtle);
+  color: var(--text-main);
+}
+
+.tree-item.active {
+  background: rgba(16, 185, 129, 0.12);
+  color: var(--success);
+  font-weight: 700;
+}
+
+.tree-item-icon-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.item-icon {
+  color: #0284c7;
+}
+
+[data-theme="dark"] .item-icon {
+  color: #38bdf8;
+}
+
+.svc-icon {
+  color: #7c3aed;
+}
+
+[data-theme="dark"] .svc-icon {
+  color: #a78bfa;
+}
+
+.mini-status-dot {
+  position: absolute;
+  top: -1px;
+  right: -2px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: 1.5px solid var(--bg-sidebar);
+  background: var(--text-mute);
+}
+
+.mini-status-dot.running {
+  background: #10b981;
+}
+
+.mini-status-dot.partial {
+  background: #f59e0b;
+}
+
+.mini-status-dot.exited,
+.mini-status-dot.stopped {
+  background: #64748b;
+}
+
+.tree-item-name {
+  font-size: 0.82rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--text-main);
+}
+
+.mini-tag {
+  font-size: 0.58rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  padding: 0.05rem 0.25rem;
+  border-radius: 3px;
+  background: rgba(167, 139, 250, 0.2);
+  color: #7c3aed;
+}
+
+[data-theme="dark"] .mini-tag {
+  color: #c084fc;
+}
+
 </style>

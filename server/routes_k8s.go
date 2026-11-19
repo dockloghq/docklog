@@ -135,6 +135,38 @@ func (s *Server) handleGetPodDetail(c echo.Context) error {
 	if err != nil {
 		return k8sListError(c, err)
 	}
+
+	var dbIsAdmin bool
+	if config.AuthDisabled {
+		dbIsAdmin = true
+	} else if user != nil {
+		db.DB.QueryRow("SELECT COALESCE(is_admin, 0) FROM users WHERE id = ?", user.ID).Scan(&dbIsAdmin)
+	}
+	var dbCanShell bool
+	if user != nil {
+		db.DB.QueryRow("SELECT COALESCE(can_shell, 0) FROM users WHERE id = ?", user.ID).Scan(&dbCanShell)
+	}
+
+	canShell := (dbIsAdmin && middleware.ContainerActionEnvAllowed("shell"))
+	if !dbIsAdmin && user != nil {
+		canShell = middleware.StaffHasShellPermission(user.ID) && middleware.ContainerActionEnvAllowed("shell") && dbCanShell
+	}
+
+	if !canShell {
+		for i := range pod.Containers {
+			for j, envStr := range pod.Containers[i].Env {
+				parts := strings.SplitN(envStr, "=", 2)
+				pod.Containers[i].Env[j] = parts[0] + "=••••••••••••"
+			}
+		}
+		for i := range pod.InitContainers {
+			for j, envStr := range pod.InitContainers[i].Env {
+				parts := strings.SplitN(envStr, "=", 2)
+				pod.InitContainers[i].Env[j] = parts[0] + "=••••••••••••"
+			}
+		}
+	}
+
 	return c.JSON(http.StatusOK, pod)
 }
 

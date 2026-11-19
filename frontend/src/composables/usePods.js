@@ -32,7 +32,7 @@ export async function fetchNamespaces() {
     });
     if (res.ok) {
       const data = await res.json();
-      namespaces.value = data.map((item) => item.name);
+      namespaces.value = Array.isArray(data) ? data.map((item) => item.name) : [];
       fetchError.value = '';
       if (!selectedNamespace.value) {
         if (namespaces.value.includes(sharedState.k8sDefaultNs)) {

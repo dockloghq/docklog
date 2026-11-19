@@ -1,0 +1,14 @@
+# DockLog Log & UI Customization Configuration
+# Automatically synchronized with Settings > Logs Stream
+
+font_size: "small"
+compact_mode: false
+show_timestamps: true
+soft_wrap: true
+highlight_errors: true
+time_format: "auto"
+date_format: "YYYY-MM-DD"
+show_stream_labels: true
+show_line_numbers: false
+auto_scroll_mode: "smart"
+

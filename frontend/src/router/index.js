@@ -1,6 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import { secureStorage, parseJwt } from '../utils/storage';
-import { sharedState, dockerEnabled, kubernetesEnabled } from '../utils/sharedState';
+import { sharedState, dockerEnabled, kubernetesEnabled, swarmEnabled } from '../utils/sharedState';
 import { apiFetch } from '../utils/apiFetch';
 
 const routes = [
@@ -16,6 +16,18 @@ const routes = [
     name: 'Containers', 
     component: () => import('../views/Containers.vue'),
     meta: { requiresAuth: true, layout: 'main', title: 'Container Management', requiresDocker: true }
+  },
+  {
+    path: '/swarm',
+    name: 'Swarm',
+    component: () => import('../views/Swarm.vue'),
+    meta: { requiresAuth: true, layout: 'main', title: 'Docker Swarm', requiresDocker: true }
+  },
+  {
+    path: '/swarm/services/:id',
+    name: 'SwarmServiceDetail',
+    component: () => import('../views/SwarmServiceDetail.vue'),
+    meta: { requiresAuth: true, layout: 'main', title: 'Swarm Service Details', requiresDocker: true }
   },
   {
     path: '/kubernetes',
@@ -38,6 +50,10 @@ const routes = [
     name: 'PodDetail',
     component: () => import('../views/PodDetail.vue'),
     meta: { requiresAuth: true, layout: 'main', title: 'Pod Details', requiresKubernetes: true }
+  },
+  {
+    path: '/pod-detail/:namespace/:pod',
+    redirect: (to) => `/kubernetes/pods/${to.params.namespace}/${to.params.pod}`,
   },
   { 
     path: '/logs', 
@@ -62,6 +78,10 @@ const routes = [
     name: 'Admin', 
     component: () => import('../views/Admin.vue'),
     meta: { requiresAuth: true, requiresAdmin: true, layout: 'main', title: 'Admin Control Center' }
+  },
+  {
+    path: '/users',
+    redirect: '/admin'
   },
   {
     path: '/audit',
@@ -112,6 +132,9 @@ router.beforeEach(async (to, from, next) => {
       const res = await apiFetch('/api/config');
       if (res.ok) {
         const data = await res.json();
+        if (data.version) {
+          sharedState.appVersion = data.version;
+        }
         sharedState.isAuthDisabled = data.auth_disabled === true;
         sharedState.envStartPermission = data.allow_start !== false;
         sharedState.envStopPermission = data.allow_stop !== false;
@@ -119,6 +142,7 @@ router.beforeEach(async (to, from, next) => {
         sharedState.envDeletePermission = data.allow_delete !== false;
         sharedState.envShellPermission = data.allow_shell === true;
         sharedState.runtimeMode = data.runtime_mode || 'docker';
+        sharedState.swarmActive = data.swarm_active === true;
         sharedState.k8sNamespaces = Array.isArray(data.k8s_namespaces) ? data.k8s_namespaces : [];
         sharedState.k8sDefaultNs = data.k8s_default_ns || 'default';
         sharedState.k8sAvailable = data.k8s_available === true;

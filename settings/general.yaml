@@ -1,0 +1,8 @@
+# DockLog General Preferences Configuration
+# Automatically synchronized with Settings > General Preferences
+
+theme: "auto"
+language: "en-US"
+follow_recreated: "delayed"
+search_intercept: true
+

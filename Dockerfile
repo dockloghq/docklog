@@ -17,8 +17,9 @@ COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
 
 ARG TARGETOS=linux
 ARG TARGETARCH
+ARG DOCKLOG_VERSION=1.1.0
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -ldflags="-s -w" -o docklog .
+    go build -ldflags="-s -w -X 'docklog/cli.Version=${DOCKLOG_VERSION}'" -o docklog .
 
 # Stage 3: Final runtime image
 FROM alpine:3.21
@@ -26,6 +27,7 @@ WORKDIR /app
 RUN apk add --no-cache ca-certificates libc6-compat
 COPY --from=backend-builder /app/docklog /usr/local/bin/docklog
 COPY --from=backend-builder /app/frontend/dist ./frontend/dist
+COPY --from=backend-builder /app/settings ./settings
 
 EXPOSE 8000
 CMD ["docklog", "server"]

@@ -44,6 +44,12 @@ func (s *Server) Run(rt cli.Runtime) error {
 		log.Println("Debug mode disabled: verbose debug and HTTP access logs are OFF")
 	}
 	s.echo.Use(echomiddleware.Recover())
+	s.echo.Use(echomiddleware.GzipWithConfig(echomiddleware.GzipConfig{
+		Level: 5,
+		Skipper: func(c echo.Context) bool {
+			return strings.HasPrefix(c.Path(), "/ws")
+		},
+	}))
 	s.echo.Use(appmiddleware.SecurityHeadersMiddleware())
 	s.echo.Use(echomiddleware.CORSWithConfig(echomiddleware.CORSConfig{
 		AllowOriginFunc: func(origin string) (bool, error) {
@@ -111,6 +117,7 @@ func (s *Server) Run(rt cli.Runtime) error {
 	s.registerSystemRoutes(api)
 	if config.DockerEnabled() {
 		s.registerContainerRoutes(api)
+		s.registerSwarmRoutes(api)
 	}
 	if config.KubernetesEnabled() {
 		s.registerK8sRoutes(api)
@@ -119,11 +126,27 @@ func (s *Server) Run(rt cli.Runtime) error {
 	s.registerUserRoutes(api)
 	s.registerAdminRoutes(api)
 	s.registerWebSocketRoutes()
+	if config.DockerEnabled() {
+		s.registerSwarmWebSocketRoutes()
+	}
 	if config.KubernetesEnabled() {
 		s.registerK8sWebSocketRoutes()
 	}
 
 	if rt.ServeFrontend {
+		// Static assets with aggressive caching for hashed files
+		s.echo.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+			return func(c echo.Context) error {
+				path := c.Request().URL.Path
+				if strings.HasPrefix(path, "/assets/") {
+					c.Response().Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+				} else if path == "/" || strings.HasSuffix(path, ".html") {
+					c.Response().Header().Set("Cache-Control", "no-cache, must-revalidate")
+				}
+				return next(c)
+			}
+		})
+
 		s.echo.Use(echomiddleware.StaticWithConfig(echomiddleware.StaticConfig{
 			Root:   "frontend/dist",
 			Browse: false,

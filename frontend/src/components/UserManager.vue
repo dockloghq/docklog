@@ -636,7 +636,7 @@ let patternBlurTimer = null;
 
 const runningContainerNames = computed(() =>
   fleetContainers.value
-    .filter((c) => c.state === "running")
+    .filter((c) => !c.is_swarm && c.state === "running")
     .map((c) => c.name)
     .sort((a, b) => a.localeCompare(b)),
 );
@@ -1149,30 +1149,37 @@ onMounted(fetchStaff);
   align-items: center;
   justify-content: center;
   z-index: 1000;
-  padding: 1rem;
+  padding: 1.5rem;
+  overflow-y: auto;
 }
 
 .modal-card {
   width: 100%;
   max-width: 650px;
+  max-height: calc(100vh - 3rem);
+  display: flex;
+  flex-direction: column;
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 24px;
   overflow: hidden;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.35);
 }
 
 .mini-modal {
   max-width: 400px;
+  max-height: 90vh;
 }
 
 /* Header */
 .modal-card-header {
-  padding: 1.5rem 2rem;
+  padding: 1.25rem 2rem;
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
   gap: 1rem;
   border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
 }
 
 .close-btn {
@@ -1235,7 +1242,10 @@ onMounted(fetchStaff);
 
 /* Body */
 .modal-card-body {
-  padding: 2rem;
+  padding: 1.75rem 2rem;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
 }
 .form-grid.dual {
   display: grid;
@@ -1550,11 +1560,13 @@ onMounted(fetchStaff);
 
 /* Footer */
 .modal-card-footer {
-  padding: 1.5rem 2rem;
+  padding: 1.25rem 2rem;
   border-top: 1px solid var(--border);
   display: flex;
   gap: 1rem;
   justify-content: flex-end;
+  flex-shrink: 0;
+  background: var(--bg-card);
 }
 .btn-primary {
   background: var(--accent);

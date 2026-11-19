@@ -22,6 +22,7 @@ import (
 	"docklog/dockerutil"
 	"docklog/middleware"
 	"docklog/models"
+	"docklog/stats"
 
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/golang-jwt/jwt/v5"
@@ -52,7 +53,7 @@ func (s *Server) registerContainerRoutes(r *echo.Group) {
 		}
 		config.Debugf("User %d (DB Admin: %v) authorized patterns: %v", user.ID, dbIsAdmin, patterns)
 
-		var list []models.Container
+		list := make([]models.Container, 0)
 		for _, ctr := range containerList {
 			name := "unknown"
 			names, _ := ctr["Names"].([]interface{})
@@ -95,31 +96,31 @@ func (s *Server) registerContainerRoutes(r *echo.Group) {
 				createdVal, _ := ctr["Created"].(float64)
 				statusVal, _ := ctr["Status"].(string)
 
-				inspect, _ := cli.ContainerInspect(context.Background(), id, client.ContainerInspectOptions{})
-				cpuLimit := 0.0
-				memLimit := int64(0)
-				if inspect.Container.HostConfig != nil {
-					if inspect.Container.HostConfig.NanoCPUs > 0 {
-						cpuLimit = float64(inspect.Container.HostConfig.NanoCPUs) / 1e9
-					}
-					memLimit = inspect.Container.HostConfig.Memory
-				}
+				specs := containers.GetOrInspectSpecs(context.Background(), cli, id)
 
 				var lastCPU float64
 				var lastMem int64
-				db.DB.QueryRow("SELECT cpu, memory FROM stats WHERE container_id = ? ORDER BY timestamp DESC LIMIT 1", id).Scan(&lastCPU, &lastMem)
+				if pt, ok := stats.Registry.GetContainerLast(id); ok {
+					lastCPU = pt.CPU
+					lastMem = pt.Memory
+				} else {
+					_ = db.DB.QueryRow("SELECT cpu, memory FROM stats WHERE container_id = ? ORDER BY timestamp DESC LIMIT 1", id).Scan(&lastCPU, &lastMem)
+				}
 
 				list = append(list, models.Container{
-					ID:       shortID,
-					Name:     name,
-					Image:    image,
-					State:    state,
-					Created:  int64(createdVal),
-					Status:   statusVal,
-					CPULimit: cpuLimit,
-					MemLimit: memLimit,
-					CPU:      lastCPU,
-					Memory:   lastMem,
+					ID:           shortID,
+					Name:         name,
+					Image:        image,
+					State:        state,
+					Created:      int64(createdVal),
+					Status:       statusVal,
+					CPULimit:     specs.CPULimit,
+					MemLimit:     specs.MemLimit,
+					CPU:          lastCPU,
+					Memory:       lastMem,
+					IsSwarm:      specs.IsSwarm,
+					SwarmService: specs.SwarmService,
+					Ports:        specs.PortList,
 				})
 			}
 		}
@@ -128,20 +129,29 @@ func (s *Server) registerContainerRoutes(r *echo.Group) {
 
 	r.GET("/containers/:id/inspect", func(c echo.Context) error {
 		id := c.Param("id")
-		token := c.Get("user").(*jwt.Token)
-		userClaims := token.Claims.(*models.UserClaims)
 
 		var dbIsAdmin bool
-		db.DB.QueryRow("SELECT COALESCE(is_admin, 0) FROM users WHERE id = ?", userClaims.ID).Scan(&dbIsAdmin)
+		var userID int
+		if userVal := c.Get("user"); userVal != nil {
+			if token, ok := userVal.(*jwt.Token); ok && token != nil {
+				if userClaims, ok := token.Claims.(*models.UserClaims); ok && userClaims != nil {
+					userID = userClaims.ID
+					db.DB.QueryRow("SELECT COALESCE(is_admin, 0) FROM users WHERE id = ?", userID).Scan(&dbIsAdmin)
+				}
+			}
+		}
+		if config.AuthDisabled {
+			dbIsAdmin = true
+		}
 
 		container, err := cli.ContainerInspect(context.Background(), id, client.ContainerInspectOptions{})
 		if err != nil {
 			return c.JSON(http.StatusNotFound, map[string]string{"error": "Container not found"})
 		}
 
-		if !dbIsAdmin {
+		if !dbIsAdmin && userID > 0 {
 			containerName := strings.TrimPrefix(container.Container.Name, "/")
-			patterns := access.GetAuthorizedPatterns(userClaims.ID)
+			patterns := access.GetAuthorizedPatterns(userID)
 			authorized := false
 			for _, p := range patterns {
 				if matched, _ := regexp.MatchString(p, containerName); matched {
@@ -164,8 +174,25 @@ func (s *Server) registerContainerRoutes(r *echo.Group) {
 			return c.JSON(http.StatusNotFound, map[string]string{"error": "Container not found"})
 		}
 
-		if container.Container.Config != nil && len(container.Container.Config.Env) > 0 {
-			container.Container.Config.Env = containers.SanitizeContainerEnv(container.Container.Config.Env)
+		canShell := (dbIsAdmin && middleware.ContainerActionEnvAllowed("shell"))
+		if !dbIsAdmin && userID > 0 {
+			canShell = middleware.StaffHasShellPermission(userID) && middleware.ContainerActionEnvAllowed("shell")
+			var dbCanShell bool
+			db.DB.QueryRow("SELECT COALESCE(can_shell, 0) FROM users WHERE id = ?", userID).Scan(&dbCanShell)
+			if !dbCanShell {
+				canShell = false
+			}
+		}
+
+		if container.Container.Config != nil {
+			if !canShell {
+				maskedEnv := make([]string, len(container.Container.Config.Env))
+				for i, envStr := range container.Container.Config.Env {
+					parts := strings.SplitN(envStr, "=", 2)
+					maskedEnv[i] = parts[0] + "=••••••••••••"
+				}
+				container.Container.Config.Env = maskedEnv
+			}
 		}
 
 		return c.JSON(http.StatusOK, container)
@@ -668,6 +695,10 @@ func (s *Server) registerContainerRoutes(r *echo.Group) {
 		if longID == "" {
 			longID = id
 		}
+		shortID := longID
+		if len(shortID) > 12 {
+			shortID = shortID[:12]
+		}
 
 		if !userClaims.IsAdmin {
 			containerName := strings.TrimPrefix(container.Container.Name, "/")
@@ -689,9 +720,35 @@ func (s *Server) registerContainerRoutes(r *echo.Group) {
 		from := c.QueryParam("from")
 		to := c.QueryParam("to")
 
-		query := "SELECT cpu, memory, timestamp FROM stats WHERE container_id = ? "
+		var results []map[string]interface{}
+
+		// 1. Try to serve from in-memory ring buffer if duration is within 24h
+		if from == "" && to == "" && (duration == "1h" || duration == "24h" || duration == "") {
+			window := 24 * time.Hour
+			if duration == "1h" {
+				window = 1 * time.Hour
+			}
+			points := stats.Registry.GetContainerSince(longID, time.Now().Add(-window))
+			if len(points) == 0 && shortID != longID {
+				points = stats.Registry.GetContainerSince(shortID, time.Now().Add(-window))
+			}
+			if len(points) > 0 {
+				for i := len(points) - 1; i >= 0 && len(results) < 200; i-- {
+					p := points[i]
+					results = append(results, map[string]interface{}{
+						"cpu":       p.CPU,
+						"memory":    p.Memory,
+						"timestamp": p.Timestamp.UTC().Format("2006-01-02 15:04:05"),
+					})
+				}
+				return c.JSON(http.StatusOK, results)
+			}
+		}
+
+		// 2. Query SQLite for persisted data or custom time ranges
+		query := "SELECT cpu, memory, timestamp FROM stats WHERE (container_id = ? OR container_id = ?) "
 		var args []interface{}
-		args = append(args, longID)
+		args = append(args, longID, shortID)
 
 		if from != "" && to != "" {
 			query += "AND timestamp BETWEEN ? AND ? "
@@ -710,7 +767,6 @@ func (s *Server) registerContainerRoutes(r *echo.Group) {
 		}
 		defer rows.Close()
 
-		var results []map[string]interface{}
 		for rows.Next() {
 			var cpu float64
 			var memory int64

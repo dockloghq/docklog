@@ -302,14 +302,14 @@
       </div>
 
       <div v-if="activeTab !== 'overview'" class="premium-table-container embedded">
-        <table v-if="activeTab === 'pods'" class="premium-table">
+        <table v-if="activeTab === 'pods'" class="premium-table containers-table">
           <thead>
             <tr>
               <th>Pod</th>
-              <th>Ready</th>
-              <th>Restarts</th>
-              <th>Node</th>
-              <th>Phase</th>
+              <th>Images</th>
+              <th>Created</th>
+              <th>Status</th>
+              <th>State</th>
               <th class="text-right">Actions</th>
             </tr>
           </thead>
@@ -321,22 +321,75 @@
             </tr>
           </tbody>
           <tbody v-else-if="filteredPods.length">
-            <tr v-for="pod in filteredPods" :key="pod.uid || podKey(pod)">
-              <td>
-                <button class="pod-link" @click="goToPodDetail(pod)">
-                  {{ pod.name }}
-                </button>
-                <div class="sub-text">{{ pod.status }}</div>
+            <tr
+              v-for="pod in filteredPods"
+              :key="pod.uid || podKey(pod)"
+              class="container-row"
+              :class="{ 'is-running': isPodRunning(pod) }"
+            >
+              <td data-label="Pod">
+                <div class="name-cell clickable" @click="goToPodDetail(pod)">
+                  <div
+                    class="container-avatar"
+                    :class="isPodRunning(pod) ? 'running' : 'stopped'"
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                    >
+                      <rect x="3" y="3" width="18" height="18" rx="3"></rect>
+                      <path d="M9 9h6v6H9z"></path>
+                    </svg>
+                  </div>
+                  <div class="name-main">
+                    <span class="container-title">{{ pod.name }}</span>
+                    <div class="pod-sub-row">
+                      <span class="container-id">{{ pod.namespace }}</span>
+                      <span v-if="pod.node" class="pod-node-badge">{{ pod.node }}</span>
+                    </div>
+                  </div>
+                </div>
               </td>
-              <td>{{ pod.ready }}</td>
-              <td>{{ pod.restarts }}</td>
-              <td>{{ pod.node || "—" }}</td>
-              <td>
-                <span :class="['status-pill', phaseClass(pod.phase)]">{{
-                  pod.phase
-                }}</span>
+              <td data-label="Images">
+                <div class="image-cell" v-if="pod.images && pod.images.length">
+                  <div
+                    v-for="img in pod.images"
+                    :key="img"
+                    class="image-name-row"
+                  >
+                    <span class="image-name">{{ img.split(':')[0] }}</span>
+                    <span class="image-tag">{{ img.split(':')[1] || 'latest' }}</span>
+                  </div>
+                </div>
+                <span v-else class="text-mute">—</span>
               </td>
-              <td class="text-right action-cell">
+              <td data-label="Created">
+                <span class="date-label">{{ formatDate(pod.created) }}</span>
+              </td>
+              <td data-label="Status">
+                <span
+                  :class="[
+                    'uptime-label',
+                    isPodRunning(pod) ? 'is-running' : 'is-stopped',
+                  ]"
+                >
+                  {{ pod.ready }} Ready<span v-if="pod.restarts"> · {{ pod.restarts }} restarts</span>
+                </span>
+              </td>
+              <td data-label="State">
+                <div
+                  :class="[
+                    'status-pill',
+                    phaseClass(pod.phase),
+                  ]"
+                >
+                  <span class="pulse-dot"></span>
+                  {{ (pod.phase || 'UNKNOWN').toUpperCase() }}
+                </div>
+              </td>
+              <td class="text-right action-cell" data-label="Actions">
                 <div class="action-group justify-end" @click.stop>
                   <div class="action-cluster primary-actions">
                     <button
@@ -1639,6 +1692,231 @@ const runPodAction = async (pod, action) => {
 .pod-link:hover {
   color: var(--accent);
   text-decoration: underline;
+}
+
+/* Matching ContainerTable UI */
+.containers-table tr.container-row {
+  transition: background 0.2s ease;
+}
+
+.containers-table tr.container-row td:first-child {
+  position: relative;
+}
+
+.containers-table tr.container-row:hover td {
+  background: var(--card-hover);
+}
+
+.containers-table tr.container-row.is-running:hover td:first-child::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 0 4px 4px 0;
+  background: var(--success);
+}
+
+.containers-table tr.container-row:not(.is-running):hover td:first-child::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 0 4px 4px 0;
+  background: var(--text-mute);
+  opacity: 0.5;
+}
+
+.name-cell {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.name-cell.clickable {
+  cursor: pointer;
+}
+
+.container-avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+}
+
+.container-avatar svg {
+  width: 18px;
+  height: 18px;
+}
+
+.container-avatar.running {
+  background: rgba(var(--success-rgb), 0.1);
+  color: var(--success);
+  border-color: rgba(var(--success-rgb), 0.2);
+}
+
+.container-avatar.stopped {
+  background: var(--bg-subtle);
+  color: var(--text-mute);
+}
+
+.name-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.container-title {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--text-main);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 220px;
+}
+
+.name-cell.clickable:hover .container-title {
+  color: var(--accent);
+}
+
+.container-id {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-mute);
+}
+
+.pod-sub-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.1rem;
+}
+
+.pod-node-badge {
+  font-size: 0.65rem;
+  padding: 0.05rem 0.35rem;
+  border-radius: 4px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-dim);
+}
+
+.image-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.image-name-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.image-name {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text-main);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 160px;
+}
+
+.image-tag {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+
+.date-label {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.uptime-label {
+  display: inline-block;
+  font-size: 0.76rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.uptime-label.is-running {
+  color: var(--success);
+}
+
+.uptime-label.is-stopped {
+  color: var(--text-dim) !important;
+}
+
+.pulse-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  padding: 0.35rem 0.7rem;
+  border-radius: 999px;
+  width: fit-content;
+  border: 1px solid transparent;
+}
+
+.status-pill.is-running {
+  color: var(--success);
+  background: rgba(var(--success-rgb), 0.1);
+  border-color: rgba(var(--success-rgb), 0.2);
+}
+
+.status-pill.is-running .pulse-dot {
+  background: var(--success);
+  box-shadow: 0 0 6px rgba(var(--success-rgb), 0.6);
+  animation: pulse-mini 2s infinite;
+}
+
+.status-pill.is-stopped {
+  color: var(--text-mute);
+  background: var(--bg-subtle);
+  border-color: var(--border-subtle);
+}
+
+.status-pill.is-stopped .pulse-dot {
+  background: var(--text-mute);
+}
+
+.status-pill.is-pending .pulse-dot {
+  background: var(--warning);
+}
+
+.status-pill.is-failed .pulse-dot {
+  background: var(--error);
+}
+
+@keyframes pulse-mini {
+  0%, 100% { transform: scale(0.95); opacity: 1; }
+  50% { transform: scale(1.08); opacity: 0.75; }
 }
 .empty-state {
   text-align: center;

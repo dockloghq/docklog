@@ -3,7 +3,10 @@ package stats
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"os"
 	"runtime"
+	"strconv"
 	"sync"
 	"time"
 
@@ -11,6 +14,7 @@ import (
 	"docklog/dockerutil"
 
 	"github.com/moby/moby/client"
+	"github.com/shirou/gopsutil/v3/disk"
 )
 
 var (
@@ -22,7 +26,37 @@ var (
 		SystemUsage uint64
 	})
 	prevStatsMu sync.Mutex
+
+	// Periodic hourly aggregation buffer for durable history
+	hourlySystemAgg = struct {
+		sync.Mutex
+		count int
+		cpuSum float64
+		memSum uint64
+	}{}
+
+	hourlyContainerAgg = struct {
+		sync.Mutex
+		data map[string]*containerAggItem
+	}{
+		data: make(map[string]*containerAggItem),
+	}
 )
+
+type containerAggItem struct {
+	count  int
+	cpuSum float64
+	memSum uint64
+}
+
+func getRetentionDays() int {
+	if val := os.Getenv("STATS_RETENTION_DAYS"); val != "" {
+		if d, err := strconv.Atoi(val); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 7 // Default to 7 days
+}
 
 func LatestSystemStats() (map[string]interface{}, bool) {
 	sysStatsMu.RLock()
@@ -37,14 +71,72 @@ func StartCollector(cli *client.Client) {
 	go systemStatsBroadcaster()
 	collectStats(cli)
 
-	ticker := time.NewTicker(30 * time.Second)
+	// High-frequency collection into ring buffer every 30s
+	statsTicker := time.NewTicker(30 * time.Second)
 	go func() {
-		for range ticker.C {
+		for range statsTicker.C {
 			collectStats(cli)
-			db.DB.Exec("DELETE FROM stats WHERE timestamp < datetime('now', '-30 days')")
-			db.DB.Exec("DELETE FROM system_stats WHERE timestamp < datetime('now', '-30 days')")
 		}
 	}()
+
+	// Hourly checkpoint: flush aggregated 1h points to SQLite for durable cross-restart trends
+	hourlyTicker := time.NewTicker(1 * time.Hour)
+	go func() {
+		for range hourlyTicker.C {
+			flushHourlyAggregates()
+		}
+	}()
+
+	// Daily database cleanup & incremental vacuum to immediately free disk space
+	cleanupTicker := time.NewTicker(24 * time.Hour)
+	go func() {
+		// Run initial cleanup on startup
+		runDBCleanupAndVacuum()
+		for range cleanupTicker.C {
+			runDBCleanupAndVacuum()
+		}
+	}()
+}
+
+func flushHourlyAggregates() {
+	// Flush system hourly aggregate
+	hourlySystemAgg.Lock()
+	if hourlySystemAgg.count > 0 {
+		avgCPU := hourlySystemAgg.cpuSum / float64(hourlySystemAgg.count)
+		avgMem := hourlySystemAgg.memSum / uint64(hourlySystemAgg.count)
+		hourlySystemAgg.count = 0
+		hourlySystemAgg.cpuSum = 0
+		hourlySystemAgg.memSum = 0
+		hourlySystemAgg.Unlock()
+
+		_, _ = db.DB.Exec("INSERT INTO system_stats (cpu, memory) VALUES (?, ?)", avgCPU, avgMem)
+	} else {
+		hourlySystemAgg.Unlock()
+	}
+
+	// Flush containers hourly aggregate
+	hourlyContainerAgg.Lock()
+	for id, item := range hourlyContainerAgg.data {
+		if item.count > 0 {
+			avgCPU := item.cpuSum / float64(item.count)
+			avgMem := item.memSum / uint64(item.count)
+			_, _ = db.DB.Exec("INSERT INTO stats (container_id, cpu, memory) VALUES (?, ?, ?)", id, avgCPU, avgMem)
+		}
+	}
+	hourlyContainerAgg.data = make(map[string]*containerAggItem)
+	hourlyContainerAgg.Unlock()
+}
+
+func runDBCleanupAndVacuum() {
+	days := getRetentionDays()
+	retentionClause := fmt.Sprintf("-%d days", days)
+
+	_, _ = db.DB.Exec("DELETE FROM stats WHERE timestamp < datetime('now', ?)", retentionClause)
+	_, _ = db.DB.Exec("DELETE FROM system_stats WHERE timestamp < datetime('now', ?)", retentionClause)
+	_, _ = db.DB.Exec("DELETE FROM audit_logs WHERE timestamp < datetime('now', '-90 days')")
+
+	// Reclaim free pages back to the operating system
+	_, _ = db.DB.Exec("PRAGMA incremental_vacuum(500);")
 }
 
 func systemStatsBroadcaster() {
@@ -67,12 +159,18 @@ func updateSystemStatsSnapshot() {
 
 	cores := systemLogicalCPUs()
 
+	diskPercent := 0.0
+	if usage, err := disk.Usage("/"); err == nil {
+		diskPercent = usage.UsedPercent
+	}
+
 	sysStatsMu.Lock()
 	latestSystemStats = map[string]interface{}{
 		"cpu":          cpuVal,
 		"memory":       memUsed,
 		"total_memory": totalMemory,
 		"cores":        cores,
+		"disk_percent": diskPercent,
 	}
 	sysStatsMu.Unlock()
 }
@@ -104,13 +202,22 @@ func numericFromSnapshot(value interface{}) uint64 {
 }
 
 func collectStats(cli *client.Client) {
+	now := time.Now()
 	cpuVal, memUsed, ok := currentSystemSnapshot()
 	if !ok {
 		updateSystemStatsSnapshot()
 		cpuVal, memUsed, _ = currentSystemSnapshot()
 	}
 	if memUsed > 0 || cpuVal > 0 {
-		db.DB.Exec("INSERT INTO system_stats (cpu, memory) VALUES (?, ?)", cpuVal, memUsed)
+		// Push high-resolution 30s data to in-memory ring buffer (0 disk writes)
+		Registry.PushSystem(cpuVal, int64(memUsed), now)
+
+		// Accumulate into hourly aggregation buffer
+		hourlySystemAgg.Lock()
+		hourlySystemAgg.count++
+		hourlySystemAgg.cpuSum += cpuVal
+		hourlySystemAgg.memSum += memUsed
+		hourlySystemAgg.Unlock()
 	}
 
 	if cli == nil {
@@ -177,6 +284,20 @@ func collectStats(cli *client.Client) {
 		prevStatsMu.Unlock()
 
 		memUsed := s.MemoryStats.Usage - (s.MemoryStats.Stats["cache"])
-		db.DB.Exec("INSERT INTO stats (container_id, cpu, memory) VALUES (?, ?, ?)", id, cpuPercent, memUsed)
+
+		// Push to in-memory ring buffer (0 disk writes)
+		Registry.PushContainer(id, cpuPercent, int64(memUsed), now)
+
+		// Accumulate into hourly aggregation buffer
+		hourlyContainerAgg.Lock()
+		aggItem, exists := hourlyContainerAgg.data[id]
+		if !exists {
+			aggItem = &containerAggItem{}
+			hourlyContainerAgg.data[id] = aggItem
+		}
+		aggItem.count++
+		aggItem.cpuSum += cpuPercent
+		aggItem.memSum += memUsed
+		hourlyContainerAgg.Unlock()
 	}
 }

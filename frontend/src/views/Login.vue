@@ -58,7 +58,10 @@ import { apiFetch } from "../utils/apiFetch";
 import { sharedState } from "../utils/sharedState";
 import pkg from "../../package.json";
 
-const appVersion = pkg.version;
+const appVersion = computed(() => {
+  const v = sharedState.appVersion || pkg.version || "1.1.0";
+  return v.startsWith("v") ? v.slice(1) : v;
+});
 
 const router = useRouter();
 const username = ref("");

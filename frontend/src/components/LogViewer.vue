@@ -17,8 +17,15 @@
       </div>
 
       <div class="header-right">
+        <!-- Reconnection Badge if disconnected -->
+        <div v-if="isReconnecting" class="reconnect-badge">
+          <span class="pulse-dot"></span>
+          <span>Reconnecting...</span>
+          <button type="button" class="reconnect-now-btn" @click="connect(true)">Retry</button>
+        </div>
+
         <!-- Live Stats in Header -->
-        <div v-if="!isPod && container.state === 'running'" class="header-stats-live">
+        <div v-if="!isPod && !isService && container && container.state === 'running'" class="header-stats-live">
           <div class="h-stat">
             <span class="h-label">CPU</span>
             <span
@@ -51,9 +58,10 @@
             <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
           </svg>
           <input
+            ref="logSearchInputRef"
             type="text"
             v-model="logSearchQuery"
-            placeholder="Search..."
+            placeholder="Search logs (⌘F)..."
             class="search-input"
           />
         </div>
@@ -278,7 +286,18 @@
         </Transition>
       </Teleport>
 
-      <div ref="logContainer" class="log-content" @scroll="handleScroll">
+      <div
+        ref="logContainer"
+        class="log-content"
+        :class="[
+          `font-${sharedState.logSettings?.fontSize || 'small'}`,
+          {
+            'compact-mode': sharedState.logSettings?.compactMode,
+            'no-soft-wrap': sharedState.logSettings?.softWrap === false,
+          }
+        ]"
+        @scroll="handleScroll"
+      >
         <!-- Sentinel for IntersectionObserver -->
         <div
           ref="scrollSentinel"
@@ -314,8 +333,31 @@
           Beginning of history reached ({{ totalLogs }} logs)
         </div>
 
-        <div v-for="(log, i) in displayLogs" :key="logLineKey(log, i)" class="log-line">
-          <span class="line-time">{{ formatLogLineTime(log) }}</span>
+        <div
+          v-for="(log, i) in displayLogs"
+          :key="logLineKey(log, i)"
+          class="log-line"
+          :class="{
+            'is-error-line': sharedState.logSettings?.highlightErrors && isErrorLog(log)
+          }"
+        >
+          <span v-if="sharedState.logSettings?.showLineNumbers" class="line-number">
+            {{ i + 1 }}
+          </span>
+          <span v-if="getLogTask(log)" class="task-badge" :style="getTaskBadgeStyle(getLogTask(log))">
+            {{ getLogTask(log) }}
+          </span>
+          <span
+            v-if="sharedState.logSettings?.showStreamLabels"
+            class="stream-tag"
+            :class="getLogStreamLabel(log).toLowerCase()"
+          >
+            {{ getLogStreamLabel(log) }}
+          </span>
+          <span v-if="sharedState.logSettings?.showTimestamps !== false" class="line-time">
+            {{ formatLogLineTime(log) }}
+          </span>
+          <span class="line-dot" :class="getLogLevelDot(log)"></span>
           <span class="line-text" v-html="formatLog(log)"></span>
         </div>
         <div v-if="displayLogs.length === 0" class="log-empty">
@@ -347,6 +389,7 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted, nextTick, watch, computed } from "vue";
+import { sharedState } from "../utils/sharedState";
 import { secureStorage } from "../utils/storage";
 import { createAuthenticatedWebSocket } from "../utils/wsAuth";
 import { apiFetch } from "../utils/apiFetch";
@@ -354,6 +397,7 @@ import { apiFetch } from "../utils/apiFetch";
 const props = defineProps({
   container: Object,
   pod: Object,
+  service: Object,
   showClose: Boolean,
   compactHeader: Boolean,
 });
@@ -361,22 +405,43 @@ const props = defineProps({
 const emit = defineEmits(["close", "stats"]);
 
 const isPod = computed(() => !!props.pod);
-const resourceName = computed(() => (isPod.value ? props.pod.name : props.container?.name));
+const isService = computed(() => !!props.service);
+const resourceName = computed(() => {
+  if (isPod.value) return props.pod.name;
+  if (isService.value) return props.service.name;
+  return props.container?.name;
+});
 const resourceSubtitle = computed(() => {
   if (isPod.value) return `${props.pod.namespace} · pod`;
+  if (isService.value) {
+    const running = props.service.running ?? props.service.replicas ?? 0;
+    const total = props.service.replicas ?? 1;
+    return `${props.service.id?.substring(0, 12) || ''} · swarm service (${running}/${total} replicas)`;
+  }
   return props.container?.id?.substring(0, 12) || "";
 });
 const resourceState = computed(() => {
   if (isPod.value) return (props.pod.phase || "unknown").toLowerCase();
+  if (isService.value) {
+    const running = props.service.running ?? 0;
+    const total = props.service.replicas ?? 0;
+    if (running > 0 && running >= total) return "running";
+    if (running > 0) return "running";
+    return "stopped";
+  }
   return props.container?.state || "stopped";
 });
 const resourceKey = computed(() => {
   if (isPod.value) return `${props.pod.namespace}/${props.pod.name}`;
+  if (isService.value) return `swarm:${props.service.id}`;
   return props.container?.id || "";
 });
 const logsBasePath = computed(() => {
   if (isPod.value) {
     return `/api/namespaces/${encodeURIComponent(props.pod.namespace)}/pods/${encodeURIComponent(props.pod.name)}/logs`;
+  }
+  if (isService.value) {
+    return `/api/swarm/services/${props.service.id}/logs`;
   }
   return `/api/containers/${props.container.id}/logs`;
 });
@@ -384,11 +449,17 @@ const logsDownloadPath = computed(() => {
   if (isPod.value) {
     return `/api/namespaces/${encodeURIComponent(props.pod.namespace)}/pods/${encodeURIComponent(props.pod.name)}/logs/download`;
   }
+  if (isService.value) {
+    return `/api/swarm/services/${props.service.id}/logs/download`;
+  }
   return `/api/containers/${props.container.id}/logs/download`;
 });
 const logsCountPath = computed(() => {
   if (isPod.value) {
     return `/api/namespaces/${encodeURIComponent(props.pod.namespace)}/pods/${encodeURIComponent(props.pod.name)}/logs/count`;
+  }
+  if (isService.value) {
+    return `/api/swarm/services/${props.service.id}/logs/count`;
   }
   return `/api/containers/${props.container.id}/logs/count`;
 });
@@ -396,15 +467,20 @@ const wsPath = computed(() => {
   if (isPod.value) {
     return `/ws/pod-logs/${encodeURIComponent(props.pod.namespace)}/${encodeURIComponent(props.pod.name)}`;
   }
+  if (isService.value) {
+    return `/ws/swarm/services/${props.service.id}/logs`;
+  }
   return `/ws/logs/${props.container.id}`;
 });
 const downloadFilename = computed(() => {
   if (isPod.value) return `${props.pod.name}_${props.pod.namespace}`;
+  if (isService.value) return `${props.service.name || 'service'}_swarm`;
   return props.container?.name || "container";
 });
 
 const logs = ref([]);
 const logSearchQuery = ref("");
+const logSearchInputRef = ref(null);
 const logContainer = ref(null);
 const scrollSentinel = ref(null);
 const autoScroll = ref(true);
@@ -466,28 +542,143 @@ const LOG_MONTHS = [
   "Dec",
 ];
 
+const SWARM_TASK_COLORS = [
+  "#38bdf8", // Sky blue
+  "#4ade80", // Emerald green
+  "#fb923c", // Warm orange
+  "#a78bfa", // Purple
+  "#f472b6", // Pink
+  "#facc15", // Amber yellow
+  "#2dd4bf", // Teal
+  "#e879f9", // Fuchsia
+];
+
+const getTaskBadgeStyle = (taskLabel) => {
+  if (!taskLabel) return {};
+  let hash = 0;
+  for (let i = 0; i < taskLabel.length; i++) {
+    hash = (hash << 5) - hash + taskLabel.charCodeAt(i);
+    hash |= 0;
+  }
+  const color = SWARM_TASK_COLORS[Math.abs(hash) % SWARM_TASK_COLORS.length];
+  return {
+    color: '#0f172a',
+    backgroundColor: color,
+    borderColor: color,
+  };
+};
+
 const parseLogLine = (text) => {
-  const match = String(text).match(LOG_TIMESTAMP_RE);
+  let str = String(text);
+  let task = null;
+
+  // 1. Docker Swarm service log format:
+  // "adminer.1 | 2026-11-18T... log line"
+  // or "service_name.slot.task_id@node_name | 2026-11-18T... log line"
+  const swarmPrefixMatch = str.match(/^([a-zA-Z0-9_\-\.]+?)(?:\.[0-9a-z]{10,})?(?:@[a-zA-Z0-9_\-\.]+)?\s*\|\s*(.*)$/s);
+  if (swarmPrefixMatch) {
+    let rawTask = swarmPrefixMatch[1];
+    const parts = rawTask.split('.');
+    if (parts.length >= 2) {
+      task = `${parts[0].split('_').pop()}.${parts[1]}`;
+    } else {
+      task = rawTask.split('_').pop();
+    }
+    str = swarmPrefixMatch[2];
+  }
+
+  // 2. Also handle if swarm details appear without pipe:
+  // "2026-11-18T... com.docker.swarm.node.id=...,com.docker.swarm.task.id=... message"
+  const detailsMatch = str.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\s+com\.docker\.swarm\.[^\s]+\s+(.*)$/s);
+  if (detailsMatch) {
+    const timestamp = new Date(detailsMatch[1]);
+    const message = detailsMatch[2];
+    if (!task) {
+      task = props.service?.name ? `${props.service.name.split('_').pop()}.1` : "service.1";
+    }
+    return {
+      timestamp: Number.isNaN(timestamp.getTime()) ? null : timestamp,
+      message,
+      task,
+    };
+  }
+
+  const match = str.match(LOG_TIMESTAMP_RE);
   if (!match) {
-    return { timestamp: null, message: text };
+    return { timestamp: null, message: str, task };
   }
 
   const timestamp = new Date(match[1]);
   if (Number.isNaN(timestamp.getTime())) {
-    return { timestamp: null, message: text };
+    return { timestamp: null, message: str, task };
   }
 
-  return { timestamp, message: match[2] };
+  return { timestamp, message: match[2], task };
 };
 
 const formatLogTimestamp = (date) => {
   const pad = (value) => String(value).padStart(2, "0");
-  return `${LOG_MONTHS[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  const timeFormat = sharedState.logSettings?.timeFormat || 'auto';
+  const dateFormat = sharedState.logSettings?.dateFormat || 'YYYY-MM-DD';
+
+  const yyyy = date.getFullYear();
+  const mm = pad(date.getMonth() + 1);
+  const dd = pad(date.getDate());
+
+  let datePart = `${yyyy}-${mm}-${dd}`;
+  if (dateFormat === 'YYYY/MM/DD') {
+    datePart = `${yyyy}/${mm}/${dd}`;
+  } else if (dateFormat === 'YYYY/DD/MM') {
+    datePart = `${yyyy}/${dd}/${mm}`;
+  } else if (dateFormat === 'DD/MM/YYYY') {
+    datePart = `${dd}/${mm}/${yyyy}`;
+  } else if (dateFormat === 'DD-MM-YYYY') {
+    datePart = `${dd}-${mm}-${yyyy}`;
+  } else if (dateFormat === 'MM/DD/YYYY') {
+    datePart = `${mm}/${dd}/${yyyy}`;
+  }
+
+  let timePart = '';
+  if (timeFormat === '12-hour') {
+    let hours = date.getHours();
+    const ampm = hours >= 12 ? 'PM' : 'AM';
+    hours = hours % 12;
+    hours = hours ? hours : 12; // 0 becomes 12
+    timePart = `${pad(hours)}:${pad(date.getMinutes())}:${pad(date.getSeconds())} ${ampm}`;
+  } else {
+    // 24-hour (default / auto)
+    timePart = `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  }
+
+  return `${datePart} ${timePart}`;
 };
 
 const formatLogLineTime = (text) => {
   const { timestamp } = parseLogLine(text);
   return timestamp ? formatLogTimestamp(timestamp) : "";
+};
+
+const getLogStreamLabel = (text) => {
+  if (/(stderr|error|err|failed|fail)/i.test(String(text))) {
+    return 'STDERR';
+  }
+  return 'STDOUT';
+};
+
+const getLogTask = (text) => {
+  const { task } = parseLogLine(text);
+  return task;
+};
+
+const getLogLevelDot = (text) => {
+  const clean = String(text);
+  if (/(ERROR|ERR|Fail|Failed|Exception|Fatal)/i.test(clean)) return 'dot-error';
+  if (/(WARN|Warning)/i.test(clean)) return 'dot-warn';
+  return 'dot-normal';
+};
+
+const isErrorLog = (text) => {
+  return /(ERROR|ERR|Fail|Failed|Exception|Fatal)/i.test(text);
 };
 
 const formatLog = (text) => {
@@ -548,19 +739,26 @@ const fetchHistoricalLogs = async () => {
   const earliestLog = logs.value[0];
   if (!earliestLog) return;
 
-  // Extract timestamp from the first log line (flexible for varying precision)
-  const tsMatch = earliestLog.match(
-    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/,
-  );
-  if (!tsMatch) {
+  const { timestamp: parsedTs } = parseLogLine(earliestLog);
+  let until = "";
+  if (parsedTs && !Number.isNaN(parsedTs.getTime())) {
+    until = parsedTs.toISOString();
+  } else {
+    const tsMatch = earliestLog.match(
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/,
+    );
+    if (tsMatch) {
+      until = tsMatch[0];
+    }
+  }
+
+  if (!until) {
     console.warn(
       "No timestamp found in earliest log:",
       earliestLog.substring(0, 50),
     );
     return;
   }
-
-  const until = tsMatch[0];
 
   if (until === lastFetchedUntil) return;
 
@@ -640,7 +838,17 @@ const handleScroll = () => {
   if (!logContainer.value) return;
   const { scrollTop, scrollHeight, clientHeight } = logContainer.value;
 
-  // Update auto-scroll state based on distance from bottom
+  const mode = sharedState.logSettings?.autoScrollMode || 'smart';
+  if (mode === 'always') {
+    autoScroll.value = true;
+    return;
+  }
+  if (mode === 'manual') {
+    // Only user clicks on scroll to bottom can set autoScroll = true
+    return;
+  }
+
+  // Smart mode (default): automatically re-engage auto-scroll when user scrolls near the bottom
   autoScroll.value = scrollHeight - scrollTop - clientHeight < 100;
 };
 
@@ -754,7 +962,7 @@ const startLogDownload = async () => {
 };
 
 const fetchStats = async () => {
-  if (isPod.value || !props.container?.id) return;
+  if (isPod.value || isService.value || !props.container?.id) return;
   if (statsController) statsController.abort();
   statsController = new AbortController();
   try {
@@ -844,26 +1052,76 @@ const connect = () => {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
   }
-  socket = createAuthenticatedWebSocket(wsPath.value);
-  socket.onmessage = (e) => {
-    logs.value.push(e.data);
-    // Limit buffer to 5000 lines, only prune if auto-scrolling to preserve history exploration
-    if (autoScroll.value && logs.value.length > 5000) {
-      logs.value.shift();
+  let batchBuffer = [];
+  let rafPending = false;
+  let reconnectAttempts = 0;
+  const isReconnecting = ref(false);
+
+  const connect = (immediate = false) => {
+    if (immediate) reconnectAttempts = 0;
+    if (socket) {
+      socket.onclose = null;
+      socket.close();
     }
-    if (autoScroll.value) nextTick(scrollToBottom);
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    socket = createAuthenticatedWebSocket(wsPath.value);
+
+    socket.onopen = () => {
+      isReconnecting.value = false;
+      reconnectAttempts = 0;
+    };
+
+    socket.onmessage = (e) => {
+      batchBuffer.push(e.data);
+      if (!rafPending) {
+        rafPending = true;
+        requestAnimationFrame(() => {
+          if (batchBuffer.length > 0) {
+            logs.value.push(...batchBuffer);
+            batchBuffer = [];
+            if (autoScroll.value && logs.value.length > 5000) {
+              logs.value.splice(0, logs.value.length - 5000);
+            }
+            if (autoScroll.value) {
+              scrollToBottom();
+            }
+          }
+          rafPending = false;
+        });
+      }
+    };
+    socket.onclose = () => {
+      socket = null;
+      if (!viewerMounted) return;
+      isReconnecting.value = true;
+      reconnectAttempts++;
+      // Exponential backoff with jitter: 1.5s -> 3s -> 6s -> max 10s
+      const delay = Math.min(10000, 1500 * Math.pow(1.5, Math.min(reconnectAttempts, 5)));
+      reconnectTimer = setTimeout(() => {
+        if (viewerMounted && resourceKey.value) connect();
+      }, delay);
+    };
   };
-  socket.onclose = () => {
-    socket = null;
-    if (!viewerMounted) return;
-    reconnectTimer = setTimeout(() => {
-      if (viewerMounted && resourceKey.value) connect();
-    }, 3000);
-  };
+};
+
+const handleSearchShortcut = (e) => {
+  if ((e.metaKey || e.ctrlKey) && (e.key === "f" || e.key === "F")) {
+    if (sharedState.generalSettings?.searchIntercept !== false) {
+      e.preventDefault();
+      if (logSearchInputRef.value) {
+        logSearchInputRef.value.focus();
+        logSearchInputRef.value.select();
+      }
+    }
+  }
 };
 
 onMounted(() => {
   viewerMounted = true;
+  window.addEventListener("keydown", handleSearchShortcut);
   connect();
   fetchStats();
   fetchLogCount();
@@ -871,6 +1129,7 @@ onMounted(() => {
 });
 onUnmounted(() => {
   viewerMounted = false;
+  window.removeEventListener("keydown", handleSearchShortcut);
   if (reconnectTimer) {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
@@ -1041,7 +1300,7 @@ watch(
 .log-content {
   height: 100%;
   overflow-y: auto;
-  padding: 1.5rem;
+  padding: 1.5rem 1.5rem 1.5rem 1rem;
   font-family: "JetBrains Mono", monospace;
   font-size: 0.75rem;
   line-height: 1.6;
@@ -1057,20 +1316,174 @@ watch(
   pointer-events: none;
 }
 
+.log-content.font-small {
+  font-size: 0.72rem;
+}
+
+.log-content.font-medium {
+  font-size: 0.85rem;
+}
+
+.log-content.font-large {
+  font-size: 1rem;
+}
+
+.log-content.compact-mode .log-line {
+  margin-bottom: 0.08rem;
+  line-height: 1.35;
+}
+
+.log-content.no-soft-wrap .line-text {
+  white-space: pre !important;
+  word-break: normal !important;
+}
+
+.log-content.no-soft-wrap {
+  overflow-x: auto;
+}
+
 .log-line {
   display: flex;
-  gap: 1.5rem;
-  margin-bottom: 0.2rem;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 0.25rem;
+  padding: 0.15rem 0.5rem;
+  border-left: 3px solid transparent;
+  border-radius: 2px;
+  content-visibility: auto;
+  contain-intrinsic-size: 0 24px;
+}
+
+.log-line.is-error-line {
+  background: rgba(239, 68, 68, 0.12);
+  border-left-color: #ef4444;
+}
+
+.line-number {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: #64748b;
+  min-width: 2.2rem;
+  text-align: right;
+  user-select: none;
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.task-badge {
+  font-size: 0.62rem;
+  font-weight: 800;
+  font-family: var(--font-mono);
+  padding: 0.12rem 0.5rem;
+  border-radius: 999px;
+  flex-shrink: 0;
+  display: inline-block;
+  line-height: 1.3;
+  letter-spacing: 0.02em;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.reconnect-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 6px;
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  color: #f59e0b;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.reconnect-now-btn {
+  background: rgba(245, 158, 11, 0.25);
+  border: none;
+  border-radius: 4px;
+  color: #fbbf24;
+  padding: 0.1rem 0.35rem;
+  font-size: 0.68rem;
+  font-weight: 800;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.reconnect-now-btn:hover {
+  background: rgba(245, 158, 11, 0.4);
+  color: #ffffff;
+}
+
+.pulse-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #f59e0b;
+  animation: pulse 1.5s infinite;
+}
+
+.stream-tag {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  padding: 0.08rem 0.35rem;
+  border-radius: 4px;
+  flex-shrink: 0;
+  user-select: none;
+  line-height: 1.25;
+}
+
+.stream-tag.stdout {
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.25);
+}
+
+.stream-tag.stderr {
+  color: #f87171;
+  background: rgba(239, 68, 68, 0.14);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.log-content.thin-scrollbars::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+.log-content.thin-scrollbars::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.3);
+  border-radius: 4px;
 }
 
 .line-time {
-  color: var(--accent);
-  width: 11.5rem;
+  color: #64748b;
+  width: auto;
+  min-width: 9.5rem;
   flex-shrink: 0;
   user-select: none;
-  font-size: 0.7rem;
-  opacity: 0.9;
+  font-size: 0.72rem;
   white-space: nowrap;
+  font-family: var(--font-mono);
+}
+
+.line-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-top: 0.42rem;
+}
+
+.line-dot.dot-normal {
+  background: #10b981;
+}
+
+.line-dot.dot-warn {
+  background: #f59e0b;
+}
+
+.line-dot.dot-error {
+  background: #ef4444;
 }
 
 .line-text {

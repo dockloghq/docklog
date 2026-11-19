@@ -24,7 +24,7 @@
 <p align="center">
   <img src="https://img.shields.io/docker/pulls/aimldev/docklog" alt="Docker Pulls">
   <img src="https://img.shields.io/github/license/dockloghq/docklog" alt="License">
-  <img src="https://img.shields.io/badge/version-1.0.0-0891b2" alt="Version">
+  <img src="https://img.shields.io/badge/version-1.1.0-0891b2" alt="Version">
   <img src="https://img.shields.io/badge/Backend-Go-00add8" alt="Backend">
   <img src="https://img.shields.io/badge/Frontend-Vue--3-42b883" alt="Frontend">
   <img src="https://img.shields.io/github/stars/dockloghq/docklog?style=social" alt="GitHub Stars">
@@ -168,6 +168,16 @@ Most Docker log viewers are built for a single administrator. DockLog is built f
 - Full audit trail for sensitive actions
 
 See [Security & RBAC](docs/SECURITY.md) for details.
+
+## 🐝 Docker Swarm (built-in)
+
+When connected to a Docker Engine in Swarm mode:
+
+- Dedicated **Swarm** view with services, nodes, and cluster tasks
+- View and scale service replica counts with RBAC checks
+- Inspect Swarm manager and worker nodes with availability controls (`active`, `pause`, `drain`)
+- Track desired vs. current execution states and failure messages for tasks across nodes
+- Stream live logs aggregated across Swarm service replicas
 
 ## ☸️ Kubernetes (optional)
 

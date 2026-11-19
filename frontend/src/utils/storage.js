@@ -3,17 +3,57 @@
 
 const KEY_PREFIX = 'dl_';
 
+// In-memory fallback if localStorage is blocked (e.g. Firefox Strict Privacy / Private Browsing)
+const memoryStore = new Map();
+
+function safeGetStorage(key) {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      return localStorage.getItem(key);
+    }
+  } catch {
+    // LocalStorage blocked or restricted
+  }
+  return memoryStore.get(key) || null;
+}
+
+function safeSetStorage(key, value) {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(key, value);
+    }
+  } catch {
+    // LocalStorage blocked or restricted
+  }
+  memoryStore.set(key, value);
+}
+
+function safeRemoveStorage(key) {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(key);
+    }
+  } catch {
+    // LocalStorage blocked or restricted
+  }
+  memoryStore.delete(key);
+}
+
 export const secureStorage = {
   setItem: (key, value) => {
-    const stringValue = typeof value === 'object' ? JSON.stringify(value) : String(value);
-    const obfuscatedValue = btoa(encodeURIComponent(stringValue));
-    localStorage.setItem(KEY_PREFIX + key, obfuscatedValue);
+    try {
+      const stringValue = typeof value === 'object' ? JSON.stringify(value) : String(value);
+      const obfuscatedValue = btoa(encodeURIComponent(stringValue));
+      safeSetStorage(KEY_PREFIX + key, obfuscatedValue);
+    } catch (e) {
+      console.warn('Failed to set item in secureStorage:', e);
+    }
   },
   
   getItem: (key) => {
-    const value = localStorage.getItem(KEY_PREFIX + key);
-    if (!value) return null;
     try {
+      const value = safeGetStorage(KEY_PREFIX + key);
+      if (!value) return null;
       const decodedValue = decodeURIComponent(atob(value));
       if (decodedValue === 'true') return true;
       if (decodedValue === 'false') return false;
@@ -28,13 +68,24 @@ export const secureStorage = {
   },
   
   removeItem: (key) => {
-    localStorage.removeItem(KEY_PREFIX + key);
+    try {
+      safeRemoveStorage(KEY_PREFIX + key);
+    } catch (e) {
+      console.warn('Failed to remove item in secureStorage:', e);
+    }
   },
   
   clear: () => {
-    Object.keys(localStorage).forEach(k => {
-      if (k.startsWith(KEY_PREFIX)) localStorage.removeItem(k);
-    });
+    try {
+      if (typeof localStorage !== 'undefined') {
+        Object.keys(localStorage).forEach(k => {
+          if (k.startsWith(KEY_PREFIX)) localStorage.removeItem(k);
+        });
+      }
+    } catch {
+      // Ignore
+    }
+    memoryStore.clear();
   }
 };
 

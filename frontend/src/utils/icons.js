@@ -110,6 +110,20 @@ export const icons = {
     { tag: "path", attrs: { d: "M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" } },
   ],
   chevronLeft: [{ tag: "polyline", attrs: { points: "15 18 9 12 15 6" } }],
+  chevronRight: [{ tag: "polyline", attrs: { points: "9 18 15 12 9 6" } }],
+  check: [{ tag: "polyline", attrs: { points: "20 6 9 17 4 12" } }],
+  network: [
+    { tag: "rect", attrs: { x: 16, y: 16, width: 6, height: 6, rx: 1 } },
+    { tag: "rect", attrs: { x: 2, y: 16, width: 6, height: 6, rx: 1 } },
+    { tag: "rect", attrs: { x: 9, y: 2, width: 6, height: 6, rx: 1 } },
+    { tag: "path", attrs: { d: "M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" } },
+    { tag: "line", attrs: { x1: 12, y1: 8, x2: 12, y2: 12 } },
+  ],
+  layers: [
+    { tag: "polygon", attrs: { points: "12 2 2 7 12 12 22 7 12 2" } },
+    { tag: "polyline", attrs: { points: "2 17 12 22 22 17" } },
+    { tag: "polyline", attrs: { points: "2 12 12 17 22 12" } },
+  ],
   trash: [
     { tag: "polyline", attrs: { points: "3 6 5 6 21 6" } },
     { tag: "path", attrs: { d: "M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" } },
@@ -118,5 +132,31 @@ export const icons = {
     { tag: "path", attrs: { d: "M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" } },
     { tag: "polyline", attrs: { points: "15 3 21 3 21 9" } },
     { tag: "line", attrs: { x1: 10, y1: 14, x2: 21, y2: 3 } },
+  ],
+  moreVertical: [
+    { tag: "circle", attrs: { cx: 12, cy: 12, r: 1.5, fill: "currentColor" } },
+    { tag: "circle", attrs: { cx: 12, cy: 5, r: 1.5, fill: "currentColor" } },
+    { tag: "circle", attrs: { cx: 12, cy: 19, r: 1.5, fill: "currentColor" } },
+  ],
+  chevronDown: [
+    { tag: "polyline", attrs: { points: "6 9 12 15 18 9" } },
+  ],
+  k8sWheel: [
+    { tag: "circle", attrs: { cx: 12, cy: 12, r: 9 } },
+    { tag: "circle", attrs: { cx: 12, cy: 12, r: 3 } },
+    { tag: "line", attrs: { x1: 12, y1: 3, x2: 12, y2: 9 } },
+    { tag: "line", attrs: { x1: 12, y1: 15, x2: 12, y2: 21 } },
+    { tag: "line", attrs: { x1: 4.2, y1: 7.5, x2: 9.4, y2: 10.5 } },
+    { tag: "line", attrs: { x1: 14.6, y1: 13.5, x2: 19.8, y2: 16.5 } },
+    { tag: "line", attrs: { x1: 4.2, y1: 16.5, x2: 9.4, y2: 13.5 } },
+    { tag: "line", attrs: { x1: 14.6, y1: 10.5, x2: 19.8, y2: 7.5 } },
+  ],
+  dockerMoby: [
+    { tag: "path", attrs: { d: "M2 13c1.5 0 2.5 1 4 1s2.5-1 4-1 2.5 1 4 1 2.5-1 4-1 2 0.7 3 1.5c-0.5 4-4.5 6.5-10 6.5C5 21 2 17.5 2 13z" } },
+    { tag: "rect", attrs: { x: 5, y: 9, width: 2, height: 2, rx: 0.5 } },
+    { tag: "rect", attrs: { x: 8, y: 9, width: 2, height: 2, rx: 0.5 } },
+    { tag: "rect", attrs: { x: 11, y: 9, width: 2, height: 2, rx: 0.5 } },
+    { tag: "rect", attrs: { x: 8, y: 6, width: 2, height: 2, rx: 0.5 } },
+    { tag: "rect", attrs: { x: 11, y: 6, width: 2, height: 2, rx: 0.5 } },
   ],
 };

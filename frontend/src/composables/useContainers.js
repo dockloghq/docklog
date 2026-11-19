@@ -21,7 +21,8 @@ export async function fetchContainers() {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (res.ok) {
-      containers.value = await res.json();
+      const data = await res.json();
+      containers.value = Array.isArray(data) ? data : [];
     }
   } catch (err) {
     console.error(err);
@@ -33,7 +34,11 @@ export async function fetchContainers() {
 function startPolling() {
   if (pollInterval) return;
   fetchContainers();
-  pollInterval = setInterval(fetchContainers, 3000);
+  pollInterval = setInterval(() => {
+    // Only fetch if tab is active and visible
+    if (typeof document !== 'undefined' && document.hidden) return;
+    fetchContainers();
+  }, 3000);
 }
 
 function stopPolling() {
@@ -70,8 +75,14 @@ export function useContainers(options = {}) {
     return '';
   });
 
+  const standaloneContainers = computed(() =>
+    containers.value.filter((c) => !c.is_swarm),
+  );
+
+  const standaloneCount = computed(() => standaloneContainers.value.length);
+
   const filteredContainers = computed(() =>
-    containers.value.filter(
+    standaloneContainers.value.filter(
       (c) =>
         c.name.toLowerCase().includes(sharedState.searchQuery.toLowerCase()) ||
         c.image.toLowerCase().includes(sharedState.searchQuery.toLowerCase()),
@@ -79,11 +90,11 @@ export function useContainers(options = {}) {
   );
 
   const runningCount = computed(
-    () => containers.value.filter((c) => c.state === 'running').length,
+    () => standaloneContainers.value.filter((c) => c.state === 'running').length,
   );
 
   const stoppedCount = computed(
-    () => containers.value.filter((c) => c.state !== 'running').length,
+    () => standaloneContainers.value.filter((c) => c.state !== 'running').length,
   );
 
   const fetchStatsNow = async (id) => {
@@ -195,6 +206,8 @@ export function useContainers(options = {}) {
 
   return {
     containers,
+    standaloneContainers,
+    standaloneCount,
     loading,
     filteredContainers,
     runningCount,

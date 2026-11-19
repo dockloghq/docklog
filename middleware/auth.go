@@ -287,7 +287,17 @@ func isWebHTTPClientAllowed(r *http.Request) bool {
 	if strings.ToLower(r.Header.Get(HeaderDockLogClient)) != ClientHeaderWeb {
 		return false
 	}
-	return isWebOriginAllowed(r)
+	if isWebOriginAllowed(r) {
+		return true
+	}
+	// Fallback for privacy-focused browsers (e.g. Firefox ETP, Private Browsing)
+	// that strip Origin, Referer, and Sec-Fetch-Site on GET/sub-requests,
+	// provided the request targets the current host and supplies a Bearer auth token.
+	auth := r.Header.Get("Authorization")
+	if strings.HasPrefix(auth, "Bearer ") && requestHostAllowed(r) {
+		return true
+	}
+	return false
 }
 
 func isNativeAppRequest(r *http.Request) bool {
@@ -316,6 +326,10 @@ func IsWSAccessAllowed(r *http.Request) bool {
 		return true
 	}
 	if isWebOriginAllowed(r) {
+		return true
+	}
+	// Fallback for privacy-focused browsers connecting to WS with auth protocol
+	if extractWSToken(r) != "" && requestHostAllowed(r) {
 		return true
 	}
 	return isNativeAppRequest(r)
@@ -406,6 +420,8 @@ func ContainerActionEnvAllowed(action string) bool {
 		return config.CanRestart
 	case "remove":
 		return config.CanDelete
+	case "shell":
+		return config.AllowShell
 	default:
 		return false
 	}
@@ -443,6 +459,15 @@ func staffContainerActionQuery(action string) string {
 	default:
 		return ""
 	}
+}
+
+func StaffHasShellPermission(userID int) bool {
+	var can bool
+	err := db.DB.QueryRow("SELECT can_shell FROM users WHERE id = ? AND is_active = 1", userID).Scan(&can)
+	if err != nil {
+		return false
+	}
+	return can
 }
 
 func StaffHasContainerActionPermission(action string, userID int) (bool, error) {

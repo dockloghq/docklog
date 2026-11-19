@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"docklog/config"
@@ -20,7 +21,46 @@ const (
 	versionCheckHTTPTimeout = 10 * time.Second
 )
 
-var semverRe = regexp.MustCompile(`^v?(\d+)\.(\d+)\.(\d+)$`)
+var (
+	semverRe = regexp.MustCompile(`^v?(\d+)\.(\d+)\.(\d+)$`)
+
+	latestVersionCache   string
+	hasUpdateCache       bool
+	versionCacheMu       sync.RWMutex
+	lastCheckedTime      time.Time
+)
+
+// CheckVersionStatus checks Docker Hub and returns version information
+func CheckVersionStatus(currentVersion string) (current string, latest string, updateAvailable bool, err error) {
+	current = currentVersion
+	versionCacheMu.RLock()
+	if time.Since(lastCheckedTime) < 15*time.Minute && latestVersionCache != "" {
+		latest = latestVersionCache
+		updateAvailable = hasUpdateCache
+		versionCacheMu.RUnlock()
+		return
+	}
+	versionCacheMu.RUnlock()
+
+	parsedCurrent, hasCurrent := ParseSemver(currentVersion)
+	semverLatest, found, _, fetchErr := fetchLatestDockerHubSemver()
+	if fetchErr != nil {
+		return currentVersion, currentVersion, false, fetchErr
+	}
+
+	latest = semverLatest.Raw
+	if found && hasCurrent {
+		updateAvailable = IsSemverNewer(semverLatest, parsedCurrent)
+	}
+
+	versionCacheMu.Lock()
+	latestVersionCache = latest
+	hasUpdateCache = updateAvailable
+	lastCheckedTime = time.Now()
+	versionCacheMu.Unlock()
+
+	return current, latest, updateAvailable, nil
+}
 
 type dockerHubTagsResponse struct {
 	Results []struct {

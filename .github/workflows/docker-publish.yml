@@ -8,6 +8,8 @@ on:
       - beta*
       - beta/*
       - "stable/*"
+    tags:
+      - "v*.*.*"
     paths-ignore:
       - "README.md"
       - "assets/**"
@@ -56,6 +58,9 @@ jobs:
             # Tag 'latest' and 'stable' when pushing to the main branch
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
             type=raw,value=stable,enable=${{ github.ref == 'refs/heads/main' }}
+            # Git release tag (e.g., v1.0.1 -> 1.0.1)
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
             # Tag 'beta' when pushing to the beta or beta/* branches
             type=raw,value=beta,enable=${{ startsWith(github.ref, 'refs/heads/beta') }}
             # Extract the version from 'stable/*' branches (e.g., stable/1.0.0 -> 1.0.0)
@@ -65,6 +70,37 @@ jobs:
             # Extract the version from 'beta1.0.0' branches (e.g., beta1.0.0 -> beta-1.0.0)
             type=match,pattern=beta(.*),group=1,prefix=beta-,enable=${{ startsWith(github.ref, 'refs/heads/beta') && github.ref != 'refs/heads/beta' }}
 
+      - name: Determine dynamic build version
+        id: version
+        shell: bash
+        run: |
+          REF="${{ github.ref }}"
+          VERSION=""
+          if [[ "$REF" == refs/tags/v* ]]; then
+            VERSION="${REF#refs/tags/v}"
+          elif [[ "$REF" == refs/heads/stable/* ]]; then
+            VERSION="${REF#refs/heads/stable/}"
+          elif [[ "$REF" == refs/heads/beta/* ]]; then
+            VERSION="beta-${REF#refs/heads/beta/}"
+          elif [[ "$REF" =~ ^refs/heads/beta([0-9].*) ]]; then
+            VERSION="beta-${BASH_REMATCH[1]}"
+          fi
+
+          # Fallback to package.json version if branch is main or unversioned
+          if [ -z "$VERSION" ] && [ -f frontend/package.json ]; then
+            PKG_VER=$(node -p "require('./frontend/package.json').version" 2>/dev/null || echo "")
+            if [ -n "$PKG_VER" ]; then
+              VERSION="$PKG_VER"
+            fi
+          fi
+
+          if [ -z "$VERSION" ]; then
+            VERSION="1.1.0"
+          fi
+
+          echo "Resolved version: $VERSION"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
@@ -73,5 +109,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            DOCKLOG_VERSION=${{ steps.version.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

@@ -10,7 +10,7 @@
       </div>
       <div class="hero-stats">
         <div class="hero-stat">
-          <span class="hero-stat-val">{{ containers.length }}</span>
+          <span class="hero-stat-val">{{ standaloneCount }}</span>
           <span class="hero-stat-lbl">Total</span>
         </div>
         <div class="hero-stat success">
@@ -91,8 +91,12 @@ const stateFilter = ref("all");
 const { containers, loading, runningCount, stoppedCount, fetchContainers } =
   useContainers();
 
+const standaloneCount = computed(
+  () => containers.value.filter((c) => !c.is_swarm).length,
+);
+
 const filters = computed(() => [
-  { label: "All", value: "all", count: containers.value.length },
+  { label: "All", value: "all", count: standaloneCount.value },
   { label: "Running", value: "running", count: runningCount.value },
   { label: "Stopped", value: "stopped", count: stoppedCount.value },
 ]);

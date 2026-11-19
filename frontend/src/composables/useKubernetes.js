@@ -49,7 +49,7 @@ export async function fetchNamespaces() {
   namespacesLoading.value = true;
   try {
     const data = await apiGet('/api/namespaces');
-    namespaces.value = data.map((item) => item.name);
+    namespaces.value = Array.isArray(data) ? data.map((item) => item.name) : [];
     fetchError.value = '';
     if (!selectedNamespace.value) {
       if (namespaces.value.includes(sharedState.k8sDefaultNs)) {
@@ -110,7 +110,10 @@ function startPolling() {
     loading.value = true;
     fetchKubernetesData();
   });
-  pollInterval = setInterval(fetchKubernetesData, 8000);
+  pollInterval = setInterval(() => {
+    if (typeof document !== 'undefined' && document.hidden) return;
+    fetchKubernetesData();
+  }, 8000);
 }
 
 function stopPolling() {
