@@ -294,8 +294,15 @@ func (s *Server) registerSystemRoutes(r *echo.Group) {
 			})
 		}
 
-		// 2. Fetch older persisted aggregates from SQLite if request spans beyond 24h or if buffer is fresh
-		cutoff := time.Now().Add(-24 * time.Hour).UTC().Format("2006-01-02 15:04:05")
+		// 2. Fetch older persisted aggregates from SQLite.
+		// If in-memory ring buffer has fresh data or fewer points (e.g. after restart/kill without snapshot),
+		// dynamically stitch from SQLite starting right before the oldest in-memory point!
+		cutoffTime := time.Now().Add(-24 * time.Hour)
+		if len(memPoints) > 0 {
+			cutoffTime = memPoints[0].Timestamp
+		}
+		cutoff := cutoffTime.UTC().Format("2006-01-02 15:04:05")
+
 		rows, err := db.DB.Query(
 			"SELECT cpu, memory, timestamp FROM system_stats WHERE timestamp > datetime('now', '-' || ? || ' days') AND timestamp < ? ORDER BY timestamp DESC",
 			days, cutoff,

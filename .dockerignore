@@ -50,6 +50,7 @@ docs
 assets
 scripts
 proto
+CHANGELOG.md
 
 # Frontend: dependencies and build output are produced inside the image
 node_modules

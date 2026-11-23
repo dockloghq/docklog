@@ -25,6 +25,10 @@ type Server struct {
 	deps Deps
 }
 
+func (s *Server) Echo() *echo.Echo {
+	return s.echo
+}
+
 func New(deps Deps) *Server {
 	return &Server{
 		echo: echo.New(),

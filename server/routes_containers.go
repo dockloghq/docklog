@@ -738,7 +738,7 @@ func (s *Server) registerContainerRoutes(r *echo.Group) {
 					results = append(results, map[string]interface{}{
 						"cpu":       p.CPU,
 						"memory":    p.Memory,
-						"timestamp": p.Timestamp.UTC().Format("2006-01-02 15:04:05"),
+						"timestamp": p.Timestamp.UTC().Format(time.RFC3339),
 					})
 				}
 				return c.JSON(http.StatusOK, results)
@@ -772,10 +772,14 @@ func (s *Server) registerContainerRoutes(r *echo.Group) {
 			var memory int64
 			var timestamp string
 			rows.Scan(&cpu, &memory, &timestamp)
+			isoTS := timestamp
+			if parsed, err := time.Parse("2006-01-02 15:04:05", timestamp); err == nil {
+				isoTS = parsed.UTC().Format(time.RFC3339)
+			}
 			results = append(results, map[string]interface{}{
 				"cpu":       cpu,
 				"memory":    memory,
-				"timestamp": timestamp,
+				"timestamp": isoTS,
 			})
 		}
 		return c.JSON(http.StatusOK, results)

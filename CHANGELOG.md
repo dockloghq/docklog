@@ -9,42 +9,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.1.0] - 2026-11-19
 
-### 🐝 Complete Docker Swarm Orchestration (New Feature)
-- **Full Docker Swarm Engine Support**: Added comprehensive Docker Swarm cluster detection, monitoring, and management across the backend and frontend.
-- **Swarm Services & Task Management**: Added dedicated Swarm views (`frontend/src/views/Swarm.vue`, `frontend/src/views/SwarmServiceDetail.vue`) for listing services, replica distributions, placement constraints, and task/container allocations.
-- **Fleet & Swarm Overview**: Introduced `frontend/src/views/dashboard/FleetOverview.vue` and `frontend/src/components/SwarmServiceTable.vue` for real-time node topology, service scaling, and replica health.
-- **Swarm WebSocket Streaming**: Added live Swarm service log aggregation and container event streaming (`server/routes_swarm.go`, `models/swarm.go`).
-- **Interactive Container & Service Hover Cards**: Added `frontend/src/components/ContainerHoverCard.vue` and `frontend/src/composables/useSwarm.js` providing instant service metadata, image digests, and health without navigating away.
+### 🐝 New Features
+- **Docker Swarm Orchestration**: Added cluster detection and management for Swarm mode with dedicated views (`/swarm` and `/swarm/services/:id`).
+- **Swarm Services & Task Management**: Added service inspection, replica count scaling with RBAC checks, node assignment tracking, and task status monitoring.
+- **Aggregated Swarm Service Logs**: Implemented real-time WebSocket log streaming aggregated across all running task replicas of a Swarm service.
+- **Fleet Overview Dashboard**: Added cluster-wide node status overview with availability controls (`active`, `pause`, `drain`) and replica health breakdown.
+- **Service & Container Hover Cards**: Added instant metadata preview cards displaying container image digests, ports, status, and node placement without page navigation.
+- **In-Memory Metric Ring Buffer**: Implemented a 24-hour circular ring buffer holding 30-second live metrics entirely in memory (~2 MB RAM), avoiding continuous database writes.
+- **Hourly Metric Downsampling**: Added 1-hour aggregate rollups (min, avg, max) written to SQLite, reducing database row growth by 99.2% (24 rows/day per container).
+- **Automated Database Maintenance**: Configured SQLite `incremental_vacuum` and automatic 7-day retention cleanup jobs to release unused disk pages back to the operating system.
+- **Database Health & Compaction Controls**: Added live SQLite file size inspection (`GET /api/system/db-stats`) and a manual compaction trigger (`POST /api/system/vacuum`) in Settings.
+- **Dynamic Application Versioning**: Implemented dynamic version injection across backend Go code, CLI flags, Docker runtime environments, and frontend interfaces.
+- **In-App Update Checker**: Added GitHub Releases API verification with 15-minute caching to detect new releases and prompt administrators in the UI.
+- **Time-Tagged Peak Indicators**: Added exact timestamp indicators to Peak CPU Spike and Peak Memory summary cards in the System Health view.
+- **Container Specs Caching**: Added in-memory TTL caching for container inspect calls to reduce Docker daemon socket load during polling.
+- **Off-Screen Log Virtualization**: Added CSS `content-visibility: auto` to offload rendering of non-visible log lines during high-throughput log streaming.
 
-### 🚀 Performance & Storage Optimization
-- **Hybrid In-Memory Metric Architecture**: Implemented a 24-hour circular ring buffer (`stats/ringbuffer.go`) storing 30-second live metrics entirely in RAM (~2 MB footprint), eliminating millions of write queries to `docklog.db`.
-- **Hourly Metric Rollups**: 1-hour downsampled aggregate summaries (min/avg/max) are written to SQLite, cutting database growth by **99.2%** (from ~2,880 rows/day to 24 rows/day per container).
-- **SQLite Space Reclamation**: Added `PRAGMA auto_vacuum = INCREMENTAL`, `PRAGMA journal_mode = WAL`, and automated daily incremental vacuum routines that delete data older than 7 days and immediately return freed pages back to the host filesystem.
-- **Docker Socket Inspection Caching**: Added an in-memory TTL cache (`containers/specs_cache.go`) for container specs, eliminating repetitive `ContainerInspect` round-trips during 3-second UI polling loops (dropped API response time from ~250ms to ~3ms).
-- **HTTP Compression & Caching**: Added Echo Gzip compression middleware (skipping WebSockets) and configured 1-year immutable caching for frontend hashed chunks with `no-cache` for index HTML.
-- **Client Polling Throttling**: Added `document.hidden` guards across containers, swarm, and Kubernetes polling loops to freeze background requests when browser tabs are inactive or minimized.
+### 🛠️ Bug Fixes
+- **Health Timeline Timezone Offset**: Formatted `/api/system/history` timestamps as RFC 3339 UTC strings, fixing an issue where local browser timezone offsets filtered out data points in 1H, 6H, 12H, and Custom range filters.
+- **Settings Brand Badge Wrapping**: Fixed title layout in Settings so the version tag stays aligned horizontally beside the brand name on the same line.
+- **Active Navigation Indicator**: Replaced inset box-shadow styling on active sidebar links with a vertical accent indicator to prevent distorted corner borders.
+- **Background Resource Usage**: Added `document.hidden` guards across containers, swarm, and Kubernetes polling loops to stop background HTTP requests when the browser tab is hidden or minimized.
+- **WebSocket Reconnection Backoff**: Added exponential backoff and connection state banners to prevent reconnection loops during network drops.
 
-### 📊 System Health & Stats Monitoring
-- **Timezone-Standardized Metric History**: Upgraded `/api/system/history` to emit standard ISO 8601 / RFC 3339 UTC timestamps, fixing a bug where local browser timezone offsets filtered out data points across `1H`, `6H`, `12H`, and `Custom` range filters.
-- **Peak Spike Visibility**: Added time-tagged indicators to "Peak CPU Spike" and "Peak Memory" cards (e.g. `90.0% at 18:45`), ensuring peak cards precisely match historical spikes on the charts.
-- **Database & Storage Health Dashboard**: Added real-time database file size and metric count monitoring to `Settings -> About`, along with a manual **Vacuum Now** action (`POST /api/system/vacuum`).
+---
 
-### 🛠️ Dynamic Versioning & CI/CD Pipeline
-- **Dynamic Application Versioning**: Replaced static version strings with dynamic resolution across Go backend, CLI flags, Docker runtime environments, and Vue frontend (`Settings.vue` and `Login.vue`).
-- **Automated CI/CD Workflow**: Updated GitHub Actions (`.github/workflows/docker-publish.yml`) to support Git release tags (`v*.*.*`) and automatically inject `DOCKLOG_VERSION` build arguments into multi-arch Docker Buildx builds.
-- **In-App Version Update Checker**: Added GitHub Releases API verification with 15-minute caching to detect new releases and prompt users with update banners in the UI.
+## [1.0.1] - 2026-11-19
 
-### 🎨 UI & Streaming Improvements
-- **Virtualized Log Viewer**: Optimized live log streaming using CSS `content-visibility: auto; contain-intrinsic-size: 0 24px;` and `requestAnimationFrame` batching for fluid 60–120 FPS scrolling with tens of thousands of lines.
-- **Resilient WebSocket Connection**: Implemented exponential backoff reconnection (1.5s $\to$ 10s max) with interactive visual status badges and manual retry buttons in the log viewer.
+### ☸️ New Features
+- **Kubernetes Cluster Support**: Added namespace discovery and pod listings for Kubernetes and Hybrid (Docker + K8s) modes.
+- **Pod Details View**: Added status inspection, nested container breakdowns, cluster event feeds, live pod logs, and integrated shell access.
+- **Runtime Mode Switcher**: Added navigation controls to toggle between Docker, Kubernetes, or Combined Fleet views.
+- **Time-Range Log Export**: Added filtering and file export for container log streams over selected date and time intervals.
+
+### 🛠️ Bug Fixes
+- **Date Range Validation**: Enforced start and end date requirements before allowing custom log export requests.
+- **ANSI Color Highlighting**: Corrected log severity highlight offsets on lines containing ANSI color sequences.
+- **Pod Table Layout**: Fixed column alignment and header positioning on smaller screen sizes.
 
 ---
 
 ## [1.0.0] - 2026-11-18
 
-### Initial Release
-- Docker Standalone and Kubernetes log viewer and metrics monitoring platform.
-- Real-time WebSockets streaming for container stdout/stderr.
-- Interactive terminal shell execution (`xterm.js`).
-- Role-based user access controls (RBAC) and JWT authentication.
-- Alerting & outbound webhooks (Slack, Discord, Teams, Custom HTTP).
+### 🚀 New Features
+- **Docker Log Streaming**: Real-time WebSocket log streaming for standalone Docker containers (stdout/stderr).
+- **Interactive Shell**: In-browser interactive terminal execution using `xterm.js`.
+- **Role-Based Access Control**: RBAC user accounts, restricted container access permissions, and session management.
+- **Audit Logging**: Structured audit trail recording administrative and authentication events.
+- **Alert Notifications**: Outbound webhook integrations for Slack, Discord, Microsoft Teams, and custom HTTP endpoints.

@@ -404,8 +404,20 @@ body {
 .nav-link.active {
   background: var(--accent-soft);
   color: var(--accent);
-  border-color: rgba(var(--accent-rgb), 0.22);
-  box-shadow: inset 3px 0 0 var(--accent);
+  border-color: rgba(var(--accent-rgb), 0.28);
+  box-shadow: none;
+  position: relative;
+}
+
+.nav-link.active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 18%;
+  bottom: 18%;
+  width: 3.5px;
+  border-radius: 0 3px 3px 0;
+  background: var(--accent);
 }
 
 .nav-link svg {

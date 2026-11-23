@@ -8,7 +8,7 @@ import (
 )
 
 // Version is injected dynamically at build time via -ldflags="-X 'docklog/cli.Version=...'".
-// If not injected, it checks the DOCKLOG_VERSION env var, falling back to "1.0.1".
+// If not injected, it checks the DOCKLOG_VERSION env var, falling back to "1.1.0".
 var Version = func() string {
 	if env := os.Getenv("DOCKLOG_VERSION"); env != "" {
 		return strings.TrimPrefix(env, "v")

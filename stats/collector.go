@@ -68,6 +68,9 @@ func LatestSystemStats() (map[string]interface{}, bool) {
 }
 
 func StartCollector(cli *client.Client) {
+	// Restore any persisted ring buffer snapshots from previous run
+	RestoreSnapshotFromFile()
+
 	go systemStatsBroadcaster()
 	collectStats(cli)
 
@@ -84,6 +87,14 @@ func StartCollector(cli *client.Client) {
 	go func() {
 		for range hourlyTicker.C {
 			flushHourlyAggregates()
+		}
+	}()
+
+	// Periodic snapshot autosave every 15 minutes (ensures crash recovery even if killed abruptly)
+	snapshotTicker := time.NewTicker(15 * time.Minute)
+	go func() {
+		for range snapshotTicker.C {
+			_ = SaveSnapshotToFile()
 		}
 	}()
 
@@ -137,6 +148,53 @@ func runDBCleanupAndVacuum() {
 
 	// Reclaim free pages back to the operating system
 	_, _ = db.DB.Exec("PRAGMA incremental_vacuum(500);")
+}
+
+func getSnapshotPath() string {
+	if sp := os.Getenv("STATS_SNAPSHOT_PATH"); sp != "" {
+		return sp
+	}
+	// Check if /app/data directory exists (common persistent volume mount)
+	if fi, err := os.Stat("/app/data"); err == nil && fi.IsDir() {
+		return "/app/data/stats_snapshot.json"
+	}
+	return "stats_snapshot.json"
+}
+
+// SaveSnapshotToFile writes the current in-memory ring buffer state to disk (atomic write)
+func SaveSnapshotToFile() error {
+	flushHourlyAggregates()
+
+	snap := Registry.ExportSnapshot()
+	if len(snap.System) == 0 && len(snap.Containers) == 0 {
+		return nil
+	}
+
+	data, err := json.Marshal(snap)
+	if err != nil {
+		return err
+	}
+
+	path := getSnapshotPath()
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
+}
+
+// RestoreSnapshotFromFile loads previously checkpointed ring buffer points back into memory
+func RestoreSnapshotFromFile() {
+	path := getSnapshotPath()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+
+	var snap SnapshotData
+	if err := json.Unmarshal(data, &snap); err == nil {
+		Registry.RestoreSnapshot(snap)
+	}
 }
 
 func systemStatsBroadcaster() {
