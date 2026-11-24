@@ -1073,7 +1073,17 @@ const connect = (immediate = false) => {
       rafPending = true;
       requestAnimationFrame(() => {
         if (batchBuffer.length > 0) {
-          logs.value.push(...batchBuffer);
+          if (logs.value.length === 0) {
+            logs.value.push(...batchBuffer);
+          } else {
+            const existingSet = new Set(logs.value);
+            for (const item of batchBuffer) {
+              if (!existingSet.has(item)) {
+                logs.value.push(item);
+                existingSet.add(item);
+              }
+            }
+          }
           batchBuffer = [];
           if (autoScroll.value && logs.value.length > 5000) {
             logs.value.splice(0, logs.value.length - 5000);
