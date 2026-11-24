@@ -986,7 +986,7 @@ const logPrefs = reactive({
   dateFormat: sharedState.logSettings?.dateFormat || "YYYY-MM-DD",
   showStreamLabels: sharedState.logSettings?.showStreamLabels ?? true,
   showLineNumbers: sharedState.logSettings?.showLineNumbers ?? false,
-  autoScrollMode: sharedState.logSettings?.autoScrollMode || "smart",
+  autoScrollMode: sharedState.logSettings?.autoScrollMode || "always",
 });
 
 watch(
@@ -1056,7 +1056,7 @@ function resetToDefaults() {
   updateLogPref("dateFormat", "YYYY-MM-DD");
   updateLogPref("showStreamLabels", true);
   updateLogPref("showLineNumbers", false);
-  updateLogPref("autoScrollMode", "smart");
+  updateLogPref("autoScrollMode", "always");
   generalPrefs.language = "auto";
   generalPrefs.followRecreated = "delayed";
   generalPrefs.searchIntercept = true;

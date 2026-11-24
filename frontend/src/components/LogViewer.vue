@@ -732,8 +732,12 @@ const logLineKey = (log, index) => {
 
 const scrollToBottom = () => {
   if (logContainer.value) {
-    logContainer.value.scrollTop = logContainer.value.scrollHeight;
-    autoScroll.value = true;
+    nextTick(() => {
+      if (logContainer.value) {
+        logContainer.value.scrollTop = logContainer.value.scrollHeight;
+        autoScroll.value = true;
+      }
+    });
   }
 };
 
@@ -842,7 +846,7 @@ const handleScroll = () => {
   if (!logContainer.value) return;
   const { scrollTop, scrollHeight, clientHeight } = logContainer.value;
 
-  const mode = sharedState.logSettings?.autoScrollMode || 'smart';
+  const mode = sharedState.logSettings?.autoScrollMode || 'always';
   if (mode === 'always') {
     autoScroll.value = true;
     return;
@@ -852,8 +856,8 @@ const handleScroll = () => {
     return;
   }
 
-  // Smart mode (default): automatically re-engage auto-scroll when user scrolls near the bottom
-  autoScroll.value = scrollHeight - scrollTop - clientHeight < 100;
+  // Smart mode (default): automatically re-engage auto-scroll when user scrolls near the bottom (within 150px)
+  autoScroll.value = scrollHeight - scrollTop - clientHeight < 150;
 };
 
 const setupObserver = () => {

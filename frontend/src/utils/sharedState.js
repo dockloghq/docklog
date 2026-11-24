@@ -88,7 +88,7 @@ export const sharedState = reactive({
     dateFormat: secureStorage.getItem('docklog_log_date_format') || 'YYYY-MM-DD', // 'YYYY-MM-DD' | 'YYYY/MM/DD' | 'YYYY/DD/MM' | 'DD/MM/YYYY' | 'MM/DD/YYYY'
     showStreamLabels: parseStorageBool(secureStorage.getItem('docklog_stream_labels'), true),
     showLineNumbers: parseStorageBool(secureStorage.getItem('docklog_line_numbers'), false),
-    autoScrollMode: secureStorage.getItem('docklog_autoscroll_mode') || 'smart', // 'smart' | 'always' | 'manual'
+    autoScrollMode: secureStorage.getItem('docklog_autoscroll_mode') || 'always', // 'always' | 'smart' | 'manual'
   },
 
   // General display preferences (synced to settings/general.yaml and localStorage)
