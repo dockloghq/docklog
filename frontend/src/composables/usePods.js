@@ -1,6 +1,6 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { secureStorage } from '../utils/storage';
-import { sharedState } from '../utils/sharedState';
+import { sharedState, kubernetesEnabled } from '../utils/sharedState';
 import { apiFetch } from '../utils/apiFetch';
 
 const pods = ref([]);
@@ -24,6 +24,11 @@ export function formatPodDate(unix) {
 }
 
 export async function fetchNamespaces() {
+  if (!kubernetesEnabled() || !sharedState.k8sAvailable) {
+    namespaces.value = [];
+    namespacesLoading.value = false;
+    return;
+  }
   namespacesLoading.value = true;
   try {
     const token = secureStorage.getItem('token');

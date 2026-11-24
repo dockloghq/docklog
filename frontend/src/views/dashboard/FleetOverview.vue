@@ -682,13 +682,17 @@ onMounted(async () => {
   document.addEventListener('click', closeMenuOnClickOutside);
   fetchContainers();
   fetchSwarmData();
-  fetchNamespaces();
-  fetchKubernetesData();
+  if (kubernetesEnabled() && sharedState.k8sAvailable) {
+    fetchNamespaces();
+    fetchKubernetesData();
+  }
 
   refreshTimer = setInterval(() => {
     fetchContainers();
     fetchSwarmData();
-    fetchKubernetesData();
+    if (kubernetesEnabled() && sharedState.k8sAvailable) {
+      fetchKubernetesData();
+    }
   }, 10000);
 });
 

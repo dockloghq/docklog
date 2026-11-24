@@ -2,7 +2,6 @@ package services
 
 import (
 	"context"
-	"io"
 	"strconv"
 	"strings"
 	"sync"
@@ -122,23 +121,16 @@ func tailLogsForAlerts(ctx context.Context, cli *client.Client, engine *AlertEng
 	}
 	defer reader.Close()
 
-	header := make([]byte, 8)
-	for {
+	isTty := inspect.Container.Config != nil && inspect.Container.Config.Tty
+	_ = dockerutil.StreamLogs(reader, isTty, func(payload []byte) error {
 		select {
 		case <-ctx.Done():
-			return
+			return ctx.Err()
 		default:
 		}
-		if _, err := io.ReadFull(reader, header); err != nil {
-			return
-		}
-		size := uint32(header[4])<<24 | uint32(header[5])<<16 | uint32(header[6])<<8 | uint32(header[7])
-		payload := make([]byte, size)
-		if _, err := io.ReadFull(reader, payload); err != nil {
-			return
-		}
 		processLogLine(engine, tracker, containerID, name, image, labels, string(payload))
-	}
+		return nil
+	})
 }
 
 func processLogLine(engine *AlertEngine, tracker *occurrenceTracker, containerID, name, image string, labels map[string]string, line string) {

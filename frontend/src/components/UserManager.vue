@@ -711,7 +711,7 @@ const fetchRunningContainers = async () => {
 };
 
 const fetchK8sFleet = async () => {
-  if (!kubernetesEnabled()) {
+  if (!kubernetesEnabled() || !sharedState.k8sAvailable) {
     k8sFleetNames.value = [];
     return;
   }

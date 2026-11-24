@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"io"
 	"net/http"
 	"regexp"
 	"strings"
@@ -12,6 +11,7 @@ import (
 	"docklog/config"
 	"docklog/containers"
 	"docklog/db"
+	"docklog/dockerutil"
 	"docklog/middleware"
 	"docklog/stats"
 
@@ -160,24 +160,10 @@ func (s *Server) registerWebSocketRoutes() {
 		}
 		defer out.Close()
 
-		header := make([]byte, 8)
-		for {
-			_, err = io.ReadFull(out, header)
-			if err != nil {
-				break
-			}
-
-			size := uint32(header[4])<<24 | uint32(header[5])<<16 | uint32(header[6])<<8 | uint32(header[7])
-			payload := make([]byte, size)
-			_, err = io.ReadFull(out, payload)
-			if err != nil {
-				break
-			}
-
-			if err := ws.WriteMessage(websocket.TextMessage, payload); err != nil {
-				break
-			}
-		}
+		isTty := container.Container.Config != nil && container.Container.Config.Tty
+		_ = dockerutil.StreamLogs(out, isTty, func(payload []byte) error {
+			return ws.WriteMessage(websocket.TextMessage, payload)
+		})
 		return nil
 	})
 

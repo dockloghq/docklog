@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"sync"
 	"time"
@@ -98,13 +99,21 @@ func StartCollector(cli *client.Client) {
 		}
 	}()
 
+	// Periodic OS memory scavenger: proactively returns idle heap pages back to the kernel every 60s
+	scavengeTicker := time.NewTicker(60 * time.Second)
+	go func() {
+		for range scavengeTicker.C {
+			debug.FreeOSMemory()
+		}
+	}()
+
 	// Daily database cleanup & incremental vacuum to immediately free disk space
 	cleanupTicker := time.NewTicker(24 * time.Hour)
 	go func() {
 		// Run initial cleanup on startup
-		runDBCleanupAndVacuum()
+		runDBCleanupAndVacuum(cli)
 		for range cleanupTicker.C {
-			runDBCleanupAndVacuum()
+			runDBCleanupAndVacuum(cli)
 		}
 	}()
 }
@@ -138,7 +147,7 @@ func flushHourlyAggregates() {
 	hourlyContainerAgg.Unlock()
 }
 
-func runDBCleanupAndVacuum() {
+func runDBCleanupAndVacuum(cli *client.Client) {
 	days := getRetentionDays()
 	retentionClause := fmt.Sprintf("-%d days", days)
 
@@ -148,6 +157,25 @@ func runDBCleanupAndVacuum() {
 
 	// Reclaim free pages back to the operating system
 	_, _ = db.DB.Exec("PRAGMA incremental_vacuum(500);")
+
+	if cli != nil {
+		if res, err := cli.ContainerList(context.Background(), client.ContainerListOptions{All: true}); err == nil {
+			existing := make(map[string]bool)
+			for _, ctr := range dockerutil.ExtractContainers(res) {
+				id, _ := ctr["ID"].(string)
+				if id == "" {
+					id, _ = ctr["Id"].(string)
+				}
+				if id != "" {
+					existing[id] = true
+				}
+			}
+			Registry.PruneRemovedContainers(existing)
+		}
+	}
+
+	runtime.GC()
+	debug.FreeOSMemory()
 }
 
 func getSnapshotPath() string {
@@ -284,6 +312,7 @@ func collectStats(cli *client.Client) {
 
 	res, _ := cli.ContainerList(context.Background(), client.ContainerListOptions{})
 	containers := dockerutil.ExtractContainers(res)
+	runningIDs := make(map[string]bool)
 	for _, ctr := range containers {
 		id, _ := ctr["ID"].(string)
 		if id == "" {
@@ -293,6 +322,7 @@ func collectStats(cli *client.Client) {
 		if state != "running" {
 			continue
 		}
+		runningIDs[id] = true
 		stats, err := cli.ContainerStats(context.Background(), id, client.ContainerStatsOptions{Stream: false})
 		if err != nil {
 			continue
@@ -358,4 +388,12 @@ func collectStats(cli *client.Client) {
 		aggItem.memSum += memUsed
 		hourlyContainerAgg.Unlock()
 	}
+
+	prevStatsMu.Lock()
+	for id := range prevStats {
+		if !runningIDs[id] {
+			delete(prevStats, id)
+		}
+	}
+	prevStatsMu.Unlock()
 }

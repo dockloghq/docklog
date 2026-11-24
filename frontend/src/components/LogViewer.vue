@@ -508,11 +508,15 @@ const stats = ref({ cpu: "0.00", memory: "0B / 0B", memPercent: 0 });
 const isLoadingHistory = ref(false);
 const hasMoreHistory = ref(true);
 const totalLogs = ref(0);
+const isReconnecting = ref(false);
 let lastFetchedUntil = null;
 let socket = null;
 let statsController = null;
 let observer = null;
 let reconnectTimer = null;
+let reconnectAttempts = 0;
+let batchBuffer = [];
+let rafPending = false;
 let historyFetchId = 0;
 let viewerMounted = false;
 
@@ -1043,67 +1047,55 @@ const fetchLogCount = async () => {
   }
 };
 
-const connect = () => {
+const connect = (immediate = false) => {
+  if (immediate) reconnectAttempts = 0;
   if (socket) {
     socket.onclose = null;
     socket.close();
+    socket = null;
   }
   if (reconnectTimer) {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
   }
-  let batchBuffer = [];
-  let rafPending = false;
-  let reconnectAttempts = 0;
-  const isReconnecting = ref(false);
+  if (!wsPath.value) return;
 
-  const connect = (immediate = false) => {
-    if (immediate) reconnectAttempts = 0;
-    if (socket) {
-      socket.onclose = null;
-      socket.close();
-    }
-    if (reconnectTimer) {
-      clearTimeout(reconnectTimer);
-      reconnectTimer = null;
-    }
-    socket = createAuthenticatedWebSocket(wsPath.value);
+  socket = createAuthenticatedWebSocket(wsPath.value);
 
-    socket.onopen = () => {
-      isReconnecting.value = false;
-      reconnectAttempts = 0;
-    };
+  socket.onopen = () => {
+    isReconnecting.value = false;
+    reconnectAttempts = 0;
+  };
 
-    socket.onmessage = (e) => {
-      batchBuffer.push(e.data);
-      if (!rafPending) {
-        rafPending = true;
-        requestAnimationFrame(() => {
-          if (batchBuffer.length > 0) {
-            logs.value.push(...batchBuffer);
-            batchBuffer = [];
-            if (autoScroll.value && logs.value.length > 5000) {
-              logs.value.splice(0, logs.value.length - 5000);
-            }
-            if (autoScroll.value) {
-              scrollToBottom();
-            }
+  socket.onmessage = (e) => {
+    batchBuffer.push(e.data);
+    if (!rafPending) {
+      rafPending = true;
+      requestAnimationFrame(() => {
+        if (batchBuffer.length > 0) {
+          logs.value.push(...batchBuffer);
+          batchBuffer = [];
+          if (autoScroll.value && logs.value.length > 5000) {
+            logs.value.splice(0, logs.value.length - 5000);
           }
-          rafPending = false;
-        });
-      }
-    };
-    socket.onclose = () => {
-      socket = null;
-      if (!viewerMounted) return;
-      isReconnecting.value = true;
-      reconnectAttempts++;
-      // Exponential backoff with jitter: 1.5s -> 3s -> 6s -> max 10s
-      const delay = Math.min(10000, 1500 * Math.pow(1.5, Math.min(reconnectAttempts, 5)));
-      reconnectTimer = setTimeout(() => {
-        if (viewerMounted && resourceKey.value) connect();
-      }, delay);
-    };
+          if (autoScroll.value) {
+            scrollToBottom();
+          }
+        }
+        rafPending = false;
+      });
+    }
+  };
+  socket.onclose = () => {
+    socket = null;
+    if (!viewerMounted) return;
+    isReconnecting.value = true;
+    reconnectAttempts++;
+    // Exponential backoff with jitter: 1.5s -> 3s -> 6s -> max 10s
+    const delay = Math.min(10000, 1500 * Math.pow(1.5, Math.min(reconnectAttempts, 5)));
+    reconnectTimer = setTimeout(() => {
+      if (viewerMounted && resourceKey.value) connect();
+    }, delay);
   };
 };
 

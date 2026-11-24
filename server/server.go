@@ -123,8 +123,8 @@ func (s *Server) Run(rt cli.Runtime) error {
 		s.registerContainerRoutes(api)
 		s.registerSwarmRoutes(api)
 	}
+	s.registerK8sRoutes(api)
 	if config.KubernetesEnabled() {
-		s.registerK8sRoutes(api)
 		s.registerK8sLogRoutes(api)
 	}
 	s.registerUserRoutes(api)

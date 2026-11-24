@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
+	"runtime/debug"
 	"syscall"
 	"time"
 
@@ -29,6 +31,7 @@ func main() {
 
 	appcli.LogRunMode(appRuntime)
 
+	debug.SetGCPercent(50)
 	config.LoadDebugMode()
 	config.LoadRuntimeConfig()
 	config.LoadAuthDisabled()
@@ -51,6 +54,13 @@ func main() {
 		Notifications: notificationService,
 		Alerts:        alertEngine,
 	})
+
+	// Release startup memory allocations back to the OS
+	go func() {
+		time.Sleep(3 * time.Second)
+		runtime.GC()
+		debug.FreeOSMemory()
+	}()
 
 	// Setup graceful shutdown listener to persist in-memory ringbuffer before exit
 	quit := make(chan os.Signal, 1)

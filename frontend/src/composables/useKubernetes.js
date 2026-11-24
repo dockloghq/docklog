@@ -1,6 +1,6 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { secureStorage } from '../utils/storage';
-import { sharedState } from '../utils/sharedState';
+import { sharedState, kubernetesEnabled } from '../utils/sharedState';
 import { apiFetch } from '../utils/apiFetch';
 
 export const pods = ref([]);
@@ -46,6 +46,11 @@ async function apiGet(path) {
 }
 
 export async function fetchNamespaces() {
+  if (!kubernetesEnabled() || !sharedState.k8sAvailable) {
+    namespaces.value = [];
+    namespacesLoading.value = false;
+    return;
+  }
   namespacesLoading.value = true;
   try {
     const data = await apiGet('/api/namespaces');
@@ -68,7 +73,7 @@ export async function fetchNamespaces() {
 }
 
 export async function fetchKubernetesData() {
-  if (!selectedNamespace.value) {
+  if (!kubernetesEnabled() || !sharedState.k8sAvailable || !selectedNamespace.value) {
     pods.value = [];
     deployments.value = [];
     hpas.value = [];

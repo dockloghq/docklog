@@ -2,9 +2,7 @@ package server
 
 import (
 	"context"
-	"encoding/binary"
 	"fmt"
-	"io"
 	"net/http"
 	"sort"
 	"strconv"
@@ -14,6 +12,7 @@ import (
 	"docklog/access"
 	"docklog/config"
 	"docklog/db"
+	"docklog/dockerutil"
 	"docklog/middleware"
 	"docklog/models"
 
@@ -570,27 +569,16 @@ func (s *Server) registerSwarmWebSocketRoutes() {
 
 		slotMap, shortSvc := s.buildSwarmTaskSlotMap(ctx, id, serviceName)
 
-		header := make([]byte, 8)
-		for {
-			_, err = io.ReadFull(out, header)
-			if err != nil {
-				return nil
-			}
-
-			size := binary.BigEndian.Uint32(header[4:8])
-			payload := make([]byte, size)
-			_, err = io.ReadFull(out, payload)
-			if err != nil {
-				return nil
-			}
-
+		_ = dockerutil.StreamLogs(out, false, func(payload []byte) error {
 			msg := formatSwarmLogLine(string(payload), slotMap, shortSvc)
 			if msg != "" {
 				if err := ws.WriteMessage(1, []byte(msg)); err != nil {
-					return nil
+					return err
 				}
 			}
-		}
+			return nil
+		})
+		return nil
 	})
 }
 
@@ -660,23 +648,13 @@ func (s *Server) handleSwarmServiceLogsHistory(c echo.Context) error {
 	slotMap, shortSvc := s.buildSwarmTaskSlotMap(context.Background(), id, svcName)
 
 	var rawLogs []string
-	header := make([]byte, 8)
-	for {
-		_, err := io.ReadFull(out, header)
-		if err != nil {
-			break
-		}
-		size := binary.BigEndian.Uint32(header[4:8])
-		payload := make([]byte, size)
-		_, err = io.ReadFull(out, payload)
-		if err != nil {
-			break
-		}
+	_ = dockerutil.StreamLogs(out, false, func(payload []byte) error {
 		line := formatSwarmLogLine(string(payload), slotMap, shortSvc)
 		if line != "" {
 			rawLogs = append(rawLogs, line)
 		}
-	}
+		return nil
+	})
 
 	// Swarm service logs can return lines grouped by task/container from docker daemon.
 	// Sort all lines chronologically by their embedded timestamp.
@@ -755,20 +733,10 @@ func (s *Server) handleSwarmServiceLogsDownload(c echo.Context) error {
 	c.Response().Header().Set(echo.HeaderContentDisposition, fmt.Sprintf("attachment; filename=\"%s_service_logs.log\"", svcName))
 	c.Response().WriteHeader(http.StatusOK)
 
-	header := make([]byte, 8)
-	for {
-		_, err := io.ReadFull(out, header)
-		if err != nil {
-			break
-		}
-		size := binary.BigEndian.Uint32(header[4:8])
-		payload := make([]byte, size)
-		_, err = io.ReadFull(out, payload)
-		if err != nil {
-			break
-		}
-		c.Response().Write(payload)
-	}
+	_ = dockerutil.StreamLogs(out, false, func(payload []byte) error {
+		_, err := c.Response().Write(payload)
+		return err
+	})
 	return nil
 }
 
@@ -790,23 +758,13 @@ func (s *Server) handleSwarmServiceLogsCount(c echo.Context) error {
 	defer out.Close()
 
 	count := 0
-	header := make([]byte, 8)
-	for {
-		_, err := io.ReadFull(out, header)
-		if err != nil {
-			break
-		}
-		size := binary.BigEndian.Uint32(header[4:8])
-		payload := make([]byte, size)
-		_, err = io.ReadFull(out, payload)
-		if err != nil {
-			break
-		}
+	_ = dockerutil.StreamLogs(out, false, func(payload []byte) error {
 		count += strings.Count(string(payload), "\n")
 		if !strings.HasSuffix(string(payload), "\n") {
 			count++
 		}
-	}
+		return nil
+	})
 	return c.JSON(http.StatusOK, map[string]int{"total": count})
 }
 

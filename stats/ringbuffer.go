@@ -24,7 +24,7 @@ type RingBuffer struct {
 // NewRingBuffer creates a ring buffer with a fixed maximum capacity
 func NewRingBuffer(capacity int) *RingBuffer {
 	if capacity <= 0 {
-		capacity = 2880 // Default to 24 hours at 30s intervals
+		capacity = 240 // 2 hours of 30s snapshots (frontend charts query max 200 points; older metrics persist in SQLite)
 	}
 	return &RingBuffer{
 		capacity: capacity,
@@ -113,7 +113,7 @@ type RingBufferRegistry struct {
 }
 
 var Registry = &RingBufferRegistry{
-	systemBuffer:     NewRingBuffer(2880), // 24h of 30s snapshots
+	systemBuffer:     NewRingBuffer(240),
 	containerBuffers: make(map[string]*RingBuffer),
 }
 
@@ -202,7 +202,7 @@ func (r *RingBufferRegistry) RestoreSnapshot(snap SnapshotData) {
 			}
 		}
 		if len(validPts) > 0 {
-			buf := NewRingBuffer(2880)
+			buf := NewRingBuffer(240)
 			buf.RestorePoints(validPts)
 			r.containerBuffers[id] = buf
 		}
@@ -221,7 +221,7 @@ func (r *RingBufferRegistry) PushContainer(containerID string, cpu float64, memo
 	r.mu.Lock()
 	buf, ok := r.containerBuffers[containerID]
 	if !ok {
-		buf = NewRingBuffer(2880) // 24h
+		buf = NewRingBuffer(240)
 		r.containerBuffers[containerID] = buf
 	}
 	r.mu.Unlock()
@@ -257,5 +257,16 @@ func (r *RingBufferRegistry) GetContainerLast(containerID string) (MetricPoint, 
 		return MetricPoint{}, false
 	}
 	return buf.Last()
+}
+
+// PruneRemovedContainers frees ring buffers for containers that have been deleted from Docker.
+func (r *RingBufferRegistry) PruneRemovedContainers(existingIDs map[string]bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for id := range r.containerBuffers {
+		if !existingIDs[id] {
+			delete(r.containerBuffers, id)
+		}
+	}
 }
 

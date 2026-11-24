@@ -25,17 +25,27 @@ func (s *Server) registerK8sRoutes(r *echo.Group) {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": msg})
 	}
 
-	if s.deps.K8s == nil {
-		r.GET("/namespaces", k8sUnavailable)
-		r.GET("/pods", k8sUnavailable)
+	emptyList := func(c echo.Context) error {
+		return c.JSON(http.StatusOK, []interface{}{})
+	}
+
+	if s.deps.K8s == nil || !config.KubernetesEnabled() {
+		r.GET("/namespaces", emptyList)
+		r.GET("/pods", emptyList)
 		r.GET("/namespaces/:namespace/pods/:pod", k8sUnavailable)
 		r.GET("/namespaces/:namespace/pods/:pod/stats-now", k8sUnavailable)
 		r.POST("/namespaces/:namespace/pods/:pod/action", k8sUnavailable)
-		r.GET("/deployments", k8sUnavailable)
-		r.GET("/hpas", k8sUnavailable)
-		r.GET("/services", k8sUnavailable)
-		r.GET("/events", k8sUnavailable)
-		r.GET("/k8s/overview", k8sUnavailable)
+		r.GET("/deployments", emptyList)
+		r.GET("/hpas", emptyList)
+		r.GET("/services", emptyList)
+		r.GET("/events", emptyList)
+		r.GET("/k8s/overview", func(c echo.Context) error {
+			return c.JSON(http.StatusOK, map[string]interface{}{
+				"pods":        0,
+				"deployments": 0,
+				"services":    0,
+			})
+		})
 		return
 	}
 

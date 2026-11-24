@@ -1017,7 +1017,7 @@ const fetchContainers = async () => {
 };
 
 const fetchPodsForLogs = async () => {
-  if (!kubernetesEnabled()) return;
+  if (!kubernetesEnabled() || !sharedState.k8sAvailable) return;
   try {
     const token = secureStorage.getItem("token");
     const nsRes = await apiFetch("/api/namespaces", {
@@ -1045,7 +1045,7 @@ const fetchPodsForLogs = async () => {
 const fetchResources = async () => {
   const tasks = [];
   if (dockerEnabled()) tasks.push(fetchContainers());
-  if (kubernetesEnabled()) tasks.push(fetchPodsForLogs());
+  if (kubernetesEnabled() && sharedState.k8sAvailable) tasks.push(fetchPodsForLogs());
   if (swarmEnabled() || sharedState.swarmActive) tasks.push(fetchSwarmData());
   await Promise.all(tasks);
   syncStateFromUrl();

@@ -1802,8 +1802,10 @@ onMounted(async () => {
     initializeLayoutData();
     fetchContainers();
     fetchSwarmData();
-    fetchNamespaces();
-    fetchKubernetesData();
+    if (kubernetesEnabled() && sharedState.k8sAvailable) {
+      fetchNamespaces();
+      fetchKubernetesData();
+    }
   }
 
   window.addEventListener("online", handleOnline);

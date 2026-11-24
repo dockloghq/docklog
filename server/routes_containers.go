@@ -327,7 +327,8 @@ func (s *Server) registerContainerRoutes(r *echo.Group) {
 			return c.JSON(http.StatusBadRequest, map[string]string{"error": "since must be before until"})
 		}
 
-		mergedLines, err := s.fetchUnifiedContainerLogs(context.Background(), cli, id, container.Container.Config.Tty, sinceStr, untilStr)
+		isTty := container.Container.Config != nil && container.Container.Config.Tty
+		mergedLines, err := s.fetchUnifiedContainerLogs(context.Background(), cli, id, isTty, sinceStr, untilStr)
 		if err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to fetch logs: " + err.Error()})
 		}
@@ -411,8 +412,9 @@ func (s *Server) registerContainerRoutes(r *echo.Group) {
 			}
 			defer out.Close()
 
+			isTty := container.Container.Config != nil && container.Container.Config.Tty
 			var output bytes.Buffer
-			if container.Container.Config.Tty {
+			if isTty {
 				io.Copy(&output, out)
 			} else {
 				stdcopy.StdCopy(&output, &output, out)
@@ -421,7 +423,8 @@ func (s *Server) registerContainerRoutes(r *echo.Group) {
 		} else {
 			// Time boundary present, use unified logs fetch to merge rotated and active logs (correct)
 			var err error
-			allLines, err = s.fetchUnifiedContainerLogs(context.Background(), cli, id, container.Container.Config.Tty, "", untilStr)
+			isTty := container.Container.Config != nil && container.Container.Config.Tty
+			allLines, err = s.fetchUnifiedContainerLogs(context.Background(), cli, id, isTty, "", untilStr)
 			if err != nil {
 				return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			}
@@ -515,8 +518,9 @@ func (s *Server) registerContainerRoutes(r *echo.Group) {
 		}
 		defer out.Close()
 
+		isTty := container.Container.Config != nil && container.Container.Config.Tty
 		var output bytes.Buffer
-		if container.Container.Config.Tty {
+		if isTty {
 			io.Copy(&output, out)
 		} else {
 			stdcopy.StdCopy(&output, &output, out)
@@ -558,7 +562,7 @@ func (s *Server) registerContainerRoutes(r *echo.Group) {
 			}
 		}
 
-		containerStats, err := cli.ContainerStats(context.Background(), id, client.ContainerStatsOptions{Stream: true})
+		containerStats, err := cli.ContainerStats(c.Request().Context(), id, client.ContainerStatsOptions{Stream: true})
 		if err != nil {
 			return err
 		}
