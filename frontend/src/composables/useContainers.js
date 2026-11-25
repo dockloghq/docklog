@@ -4,11 +4,15 @@ import { secureStorage } from '../utils/storage';
 import { sharedState, showToast, formatBytes } from '../utils/sharedState';
 import { apiFetch } from '../utils/apiFetch';
 import { logsRouteForContainer } from '../utils/logRoutes';
+import { createAuthenticatedWebSocket } from '../utils/wsAuth';
 
 const containers = ref([]);
 const loading = ref(true);
-let pollInterval = null;
-let pollSubscribers = 0;
+let eventsWs = null;
+let reconnectTimer = null;
+let refreshDebounceTimer = null;
+let fallbackInterval = null;
+let subscriberCount = 0;
 
 const activeLiveId = ref(null);
 const liveStats = ref({ cpu: 0, memory: 0 });
@@ -31,20 +35,79 @@ export async function fetchContainers() {
   }
 }
 
-function startPolling() {
-  if (pollInterval) return;
-  fetchContainers();
-  pollInterval = setInterval(() => {
-    // Only fetch if tab is active and visible
-    if (typeof document !== 'undefined' && document.hidden) return;
+function scheduleRefresh(delay = 300) {
+  if (refreshDebounceTimer) clearTimeout(refreshDebounceTimer);
+  refreshDebounceTimer = setTimeout(() => {
     fetchContainers();
-  }, 3000);
+  }, delay);
 }
 
-function stopPolling() {
-  if (pollInterval) {
-    clearInterval(pollInterval);
-    pollInterval = null;
+function connectEventsWebSocket() {
+  if (eventsWs) return;
+  try {
+    eventsWs = createAuthenticatedWebSocket('/ws/events');
+    eventsWs.onopen = () => {
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+    };
+    eventsWs.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        // If event is container lifecycle (start, die, stop, destroy, pause, unpause, restart)
+        if (msg.Type === 'container' || msg.status || msg.Action) {
+          scheduleRefresh(300);
+        }
+      } catch (e) {
+        scheduleRefresh(500);
+      }
+    };
+    eventsWs.onclose = () => {
+      eventsWs = null;
+      if (subscriberCount > 0 && !reconnectTimer) {
+        reconnectTimer = setTimeout(connectEventsWebSocket, 5000);
+      }
+    };
+    eventsWs.onerror = () => {
+      if (eventsWs) {
+        eventsWs.close();
+      }
+    };
+  } catch (err) {
+    eventsWs = null;
+  }
+}
+
+function startRealtimeSync() {
+  fetchContainers();
+  connectEventsWebSocket();
+  // Safe low-frequency fallback (every 30s instead of aggressive 3s polling)
+  if (!fallbackInterval) {
+    fallbackInterval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      fetchContainers();
+    }, 30000);
+  }
+}
+
+function stopRealtimeSync() {
+  if (eventsWs) {
+    eventsWs.onclose = null;
+    eventsWs.close();
+    eventsWs = null;
+  }
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  if (refreshDebounceTimer) {
+    clearTimeout(refreshDebounceTimer);
+    refreshDebounceTimer = null;
+  }
+  if (fallbackInterval) {
+    clearInterval(fallbackInterval);
+    fallbackInterval = null;
   }
 }
 
@@ -193,14 +256,14 @@ export function useContainers(options = {}) {
 
   onMounted(() => {
     if (!autoPoll) return;
-    pollSubscribers += 1;
-    if (pollSubscribers === 1) startPolling();
+    subscriberCount += 1;
+    if (subscriberCount === 1) startRealtimeSync();
   });
 
   onUnmounted(() => {
     if (!autoPoll) return;
-    pollSubscribers -= 1;
-    if (pollSubscribers === 0) stopPolling();
+    subscriberCount -= 1;
+    if (subscriberCount === 0) stopRealtimeSync();
     stopLiveStats();
   });
 

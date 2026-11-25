@@ -328,7 +328,7 @@ func (s *Server) registerContainerRoutes(r *echo.Group) {
 		}
 
 		isTty := container.Container.Config != nil && container.Container.Config.Tty
-		mergedLines, err := s.fetchUnifiedContainerLogs(context.Background(), cli, id, isTty, sinceStr, untilStr)
+		mergedLines, err := s.fetchUnifiedContainerLogs(context.Background(), cli, id, isTty, sinceStr, untilStr, "")
 		if err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to fetch logs: " + err.Error()})
 		}
@@ -424,7 +424,7 @@ func (s *Server) registerContainerRoutes(r *echo.Group) {
 			// Time boundary present, use unified logs fetch to merge rotated and active logs (correct)
 			var err error
 			isTty := container.Container.Config != nil && container.Container.Config.Tty
-			allLines, err = s.fetchUnifiedContainerLogs(context.Background(), cli, id, isTty, "", untilStr)
+			allLines, err = s.fetchUnifiedContainerLogs(context.Background(), cli, id, isTty, "", untilStr, strconv.Itoa(limit*2))
 			if err != nil {
 				return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			}
@@ -519,14 +519,12 @@ func (s *Server) registerContainerRoutes(r *echo.Group) {
 		defer out.Close()
 
 		isTty := container.Container.Config != nil && container.Container.Config.Tty
-		var output bytes.Buffer
-		if isTty {
-			io.Copy(&output, out)
-		} else {
-			stdcopy.StdCopy(&output, &output, out)
-		}
+		count := 0
+		_ = dockerutil.StreamLogs(out, isTty, func(payload []byte) error {
+			count += bytes.Count(payload, []byte{'\n'})
+			return nil
+		})
 
-		count := strings.Count(output.String(), "\n")
 		return c.JSON(http.StatusOK, map[string]int{"total": count})
 	})
 
@@ -858,43 +856,52 @@ func filterLogLinesByTime(lines []string, since, until time.Time) []string {
 	return filtered
 }
 
-func (s *Server) fetchUnifiedContainerLogs(ctx context.Context, cli *client.Client, id string, isTty bool, sinceStr, untilStr string) ([]string, error) {
-	// Call A: fetch rotated logs (Tail: "")
-	optionsA := client.ContainerLogsOptions{
-		ShowStdout: true,
-		ShowStderr: true,
-		Timestamps: true,
-		Follow:     false,
-		Tail:       "",
-		Since:      sinceStr,
-		Until:      untilStr,
+func (s *Server) fetchUnifiedContainerLogs(ctx context.Context, cli *client.Client, id string, isTty bool, sinceStr, untilStr string, tailLimit string) ([]string, error) {
+	// If tailLimit is specified, we fetch at most tailLimit from the active stream
+	tail := tailLimit
+	if tail == "" {
+		tail = "4000"
 	}
-	outA, err := cli.ContainerLogs(ctx, id, optionsA)
-	if err != nil {
-		return nil, err
+	// Call A: fetch rotated logs (if no tail limit or full archive requested)
+	var linesA []string
+	if tailLimit == "" {
+		optionsA := client.ContainerLogsOptions{
+			ShowStdout: true,
+			ShowStderr: true,
+			Timestamps: true,
+			Follow:     false,
+			Tail:       "",
+			Since:      sinceStr,
+			Until:      untilStr,
+		}
+		outA, err := cli.ContainerLogs(ctx, id, optionsA)
+		if err == nil {
+			var bufA bytes.Buffer
+			if isTty {
+				io.Copy(&bufA, outA)
+			} else {
+				stdcopy.StdCopy(&bufA, &bufA, outA)
+			}
+			outA.Close()
+			linesA = strings.Split(bufA.String(), "\n")
+		}
 	}
-	defer outA.Close()
 
-	var bufA bytes.Buffer
-	if isTty {
-		io.Copy(&bufA, outA)
-	} else {
-		stdcopy.StdCopy(&bufA, &bufA, outA)
-	}
-	linesA := strings.Split(bufA.String(), "\n")
-
-	// Call B: fetch active log (Tail: "4000")
+	// Call B: fetch active log with bounded tail
 	optionsB := client.ContainerLogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
 		Timestamps: true,
 		Follow:     false,
-		Tail:       "4000",
+		Tail:       tail,
 		Since:      sinceStr,
 		Until:      untilStr,
 	}
 	outB, err := cli.ContainerLogs(ctx, id, optionsB)
 	if err != nil {
+		if len(linesA) > 0 {
+			return linesA, nil
+		}
 		return nil, err
 	}
 	defer outB.Close()

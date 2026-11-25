@@ -1745,13 +1745,15 @@ const initializeLayoutData = async () => {
   connectSysStats();
 
   if (userInterval) clearInterval(userInterval);
+  // Periodic session check: every 60s (or when a 401 is triggered by apiFetch) instead of hammering every 2s
   userInterval = setInterval(async () => {
+    if (typeof document !== 'undefined' && document.hidden) return;
     const current = await fetchCurrentUser();
     if (current.status === "forbidden" && !sharedState.isAuthDisabled) {
       clearInterval(userInterval);
       router.replace("/login");
     }
-  }, 2000);
+  }, 60000);
 };
 
 const handleGlobalSearchKeydown = (e) => {
