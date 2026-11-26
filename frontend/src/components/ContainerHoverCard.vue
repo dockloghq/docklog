@@ -2,6 +2,7 @@
   <div
     v-if="visible && container"
     class="container-hover-card"
+    :class="{ 'metrics-only': metricsOnly }"
     :style="cardPositionStyle"
     @mouseenter="$emit('card-mouseenter')"
     @mouseleave="$emit('card-mouseleave')"
@@ -15,7 +16,7 @@
         ></span>
         <span class="container-title-name">{{ container.name }}</span>
       </div>
-      <div class="container-image-sub">{{ container.image }}</div>
+      <div class="container-image-sub" v-if="container.image">{{ container.image }}</div>
     </div>
 
     <!-- Metrics: CPU & MEM -->
@@ -33,7 +34,7 @@
             :style="{ height: getBarHeight(i, 'cpu') }"
           ></div>
         </div>
-        <span class="metric-value-text">{{ (currentCpu || 0).toFixed(0) }}%</span>
+        <span class="metric-value-text">{{ (currentCpu || 0).toFixed(2) }}%</span>
       </div>
 
       <!-- MEM Row -->
@@ -52,8 +53,8 @@
       </div>
     </div>
 
-    <!-- Metadata Attributes -->
-    <div class="hover-card-details">
+    <!-- Metadata Attributes (Hidden when metricsOnly is true) -->
+    <div v-if="!metricsOnly" class="hover-card-details">
       <div class="detail-row">
         <span class="detail-key">STATUS</span>
         <span class="detail-val">{{ container.state || 'running' }}</span>
@@ -72,8 +73,8 @@
       </div>
     </div>
 
-    <!-- Bottom Actions Toolbar -->
-    <div class="hover-card-actions">
+    <!-- Bottom Actions Toolbar (Hidden when metricsOnly is true) -->
+    <div v-if="!metricsOnly" class="hover-card-actions">
       <!-- Logs View Button (Logs stream) -->
       <button
         type="button"
@@ -134,6 +135,10 @@ const props = defineProps({
   position: {
     type: Object,
     default: () => ({ top: 0, left: 0 }),
+  },
+  metricsOnly: {
+    type: Boolean,
+    default: false,
   },
 });
 
@@ -341,6 +346,19 @@ function goToInspect() {
   flex-direction: column;
   gap: 0.65rem;
   margin-bottom: 1.25rem;
+}
+
+.container-hover-card.metrics-only {
+  width: 290px;
+  padding: 1rem 1.15rem;
+}
+
+.container-hover-card.metrics-only .hover-card-header {
+  margin-bottom: 0.85rem;
+}
+
+.container-hover-card.metrics-only .hover-card-metrics {
+  margin-bottom: 0;
 }
 
 .metric-row {

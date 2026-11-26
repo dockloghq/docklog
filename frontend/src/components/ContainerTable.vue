@@ -27,8 +27,8 @@
             :key="c.id"
             class="container-row"
             :class="{ 'is-running': c.state === 'running', 'is-hovered': showInlineStats && activeLiveId === c.id }"
-            @mouseenter="showInlineStats && c.state === 'running' ? startLiveStats(c.id) : null"
-            @mouseleave="showInlineStats ? stopLiveStats() : null"
+            @mouseenter="handleRowMouseEnter(c, $event)"
+            @mouseleave="handleRowMouseLeave"
           >
             <td data-label="Container">
               <div
@@ -43,17 +43,6 @@
                 <div class="name-main">
                   <span class="container-title">{{ c.name }}</span>
                   <span class="container-id">{{ c.id.substring(0, 12) }}</span>
-                  <div
-                    v-if="showInlineStats && c.state === 'running' && activeLiveId === c.id"
-                    class="inline-stats"
-                  >
-                    <span class="stat-chip live">
-                      CPU {{ liveStats.cpu?.toFixed(1) ?? c.cpu?.toFixed(1) ?? "0.0" }}%
-                    </span>
-                    <span class="stat-chip live">
-                      {{ formatBytes(liveStats.memory ?? c.memory) }}
-                    </span>
-                  </div>
                 </div>
               </div>
             </td>
@@ -281,13 +270,26 @@
         </div>
       </Transition>
     </Teleport>
+    <!-- Interactive Metrics Hover Card -->
+    <Teleport to="body">
+      <ContainerHoverCard
+        :visible="isHoverCardActive"
+        :container="hoveredContainer"
+        :stats="liveStats"
+        :position="hoverPosition"
+        metrics-only
+        @card-mouseenter="handleCardMouseEnter"
+        @card-mouseleave="handleCardMouseLeave"
+      />
+    </Teleport>
   </div>
 </template>
 
 <script setup>
-import { computed } from 'vue';
+import { ref, computed } from 'vue';
 import { useContainers } from '../composables/useContainers';
 import AppIcon from './AppIcon.vue';
+import ContainerHoverCard from './ContainerHoverCard.vue';
 import { sharedState, userCanStart, userCanStop, userCanRestart, userCanDelete, userCanShell } from '../utils/sharedState';
 
 const props = defineProps({
@@ -346,6 +348,58 @@ const visibleContainers = computed(() => {
 const showViewAllLink = computed(
   () => props.maxRows > 0 && totalCount.value > props.maxRows && !!props.viewAllTo,
 );
+
+// Floating Hover Card state
+const hoveredContainer = ref(null);
+const hoverPosition = ref({ top: 0, left: 0 });
+const isHoverCardActive = ref(false);
+let hoverLeaveTimeout = null;
+
+const handleRowMouseEnter = (c, event) => {
+  if (!props.showInlineStats || c.state !== 'running') return;
+  if (hoverLeaveTimeout) {
+    clearTimeout(hoverLeaveTimeout);
+    hoverLeaveTimeout = null;
+  }
+  hoveredContainer.value = c;
+  if (event && event.currentTarget) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const cardWidth = 290;
+    const cardHeight = 140;
+    let top = rect.top + (rect.height / 2) - (cardHeight / 2);
+    top = Math.max(12, Math.min(window.innerHeight - cardHeight - 16, top));
+
+    let left = rect.left + 220;
+    if (left + cardWidth > window.innerWidth - 16) {
+      left = Math.max(16, rect.left - cardWidth - 12);
+    }
+    hoverPosition.value = { top, left };
+  }
+  isHoverCardActive.value = true;
+  startLiveStats(c.id);
+};
+
+const handleRowMouseLeave = () => {
+  if (!props.showInlineStats) return;
+  hoverLeaveTimeout = setTimeout(() => {
+    isHoverCardActive.value = false;
+    hoveredContainer.value = null;
+    stopLiveStats();
+  }, 200);
+};
+
+const handleCardMouseEnter = () => {
+  if (hoverLeaveTimeout) {
+    clearTimeout(hoverLeaveTimeout);
+    hoverLeaveTimeout = null;
+  }
+};
+
+const handleCardMouseLeave = () => {
+  isHoverCardActive.value = false;
+  hoveredContainer.value = null;
+  stopLiveStats();
+};
 </script>
 
 <style scoped>

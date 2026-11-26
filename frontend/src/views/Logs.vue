@@ -509,6 +509,7 @@
         :container="hoveredContainer"
         :stats="liveStats"
         :position="hoverPosition"
+        metrics-only
         @card-mouseenter="handleCardMouseEnter"
         @card-mouseleave="handleCardMouseLeave"
       />

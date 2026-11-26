@@ -230,7 +230,12 @@
             <tr v-for="item in filteredItems" :key="item.uniqueKey" class="fleet-row">
               <!-- Name with green wireframe box icon -->
               <td class="col-name">
-                <div class="item-name-cell" @click="handleItemNavigate(item)">
+                <div
+                  class="item-name-cell"
+                  @click="handleItemNavigate(item)"
+                  @mouseenter="handleItemMouseEnter(item, $event)"
+                  @mouseleave="handleItemMouseLeave"
+                >
                   <span class="item-cube-icon">
                     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#22c55e" stroke-width="2">
                       <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
@@ -238,7 +243,7 @@
                       <line x1="12" y1="22.08" x2="12" y2="12" />
                     </svg>
                   </span>
-                  <span class="item-name-text" :title="item.name">{{ item.name }}</span>
+                  <span class="item-name-text">{{ item.name }}</span>
                 </div>
               </td>
 
@@ -317,12 +322,27 @@
         </table>
       </div>
     </div>
+
+    <!-- Interactive Metrics Hover Card -->
+    <Teleport to="body">
+      <ContainerHoverCard
+        :visible="isHoverCardActive"
+        :container="hoveredContainer"
+        :stats="liveStats"
+        :position="hoverPosition"
+        metrics-only
+        @card-mouseenter="handleCardMouseEnter"
+        @card-mouseleave="handleCardMouseLeave"
+      />
+    </Teleport>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
+import ContainerHoverCard from '../../components/ContainerHoverCard.vue';
+import { createAuthenticatedWebSocket } from '../../utils/wsAuth';
 import {
   sharedState,
   dockerEnabled,
@@ -665,6 +685,100 @@ function closeMenuOnClickOutside(e) {
   }
 }
 
+// Hover Card with Live Stats
+const hoveredContainer = ref(null);
+const hoverPosition = ref({ top: 0, left: 0 });
+const isHoverCardActive = ref(false);
+const liveStats = ref({ cpu: 0, memory: 0 });
+let hoverLeaveTimeout = null;
+let liveStatsWs = null;
+
+function startLiveStats(id) {
+  stopLiveStats();
+  try {
+    liveStatsWs = createAuthenticatedWebSocket(`/ws/containers/${id}/stats`);
+    liveStatsWs.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        liveStats.value = { cpu: data.cpu, memory: data.memory };
+      } catch (e) {}
+    };
+    liveStatsWs.onerror = () => {
+      stopLiveStats();
+    };
+  } catch (e) {
+    liveStatsWs = null;
+  }
+}
+
+function stopLiveStats() {
+  if (liveStatsWs) {
+    liveStatsWs.onclose = null;
+    liveStatsWs.close();
+    liveStatsWs = null;
+  }
+}
+
+function handleItemMouseEnter(item, event) {
+  // Only inspect live metrics for containers that are running
+  if (item.type !== 'Container' || item.statusClass !== 'running' || !item.id) {
+    return;
+  }
+  if (hoverLeaveTimeout) {
+    clearTimeout(hoverLeaveTimeout);
+    hoverLeaveTimeout = null;
+  }
+  const rawContainer = item.raw || {
+    id: item.id,
+    name: item.name,
+    state: 'running',
+    image: item.platform,
+  };
+  hoveredContainer.value = rawContainer;
+  liveStats.value = {
+    cpu: rawContainer.cpu || 0,
+    memory: rawContainer.memory || 0,
+  };
+
+  if (event && event.currentTarget) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const cardWidth = 290;
+    const cardHeight = 140;
+    let top = rect.top + rect.height / 2 - cardHeight / 2;
+    top = Math.max(12, Math.min(window.innerHeight - cardHeight - 16, top));
+
+    let left = rect.left + 220;
+    if (left + cardWidth > window.innerWidth - 16) {
+      left = Math.max(16, rect.left - cardWidth - 12);
+    }
+    hoverPosition.value = { top, left };
+  }
+
+  isHoverCardActive.value = true;
+  startLiveStats(item.id);
+}
+
+function handleItemMouseLeave() {
+  hoverLeaveTimeout = setTimeout(() => {
+    isHoverCardActive.value = false;
+    hoveredContainer.value = null;
+    stopLiveStats();
+  }, 200);
+}
+
+function handleCardMouseEnter() {
+  if (hoverLeaveTimeout) {
+    clearTimeout(hoverLeaveTimeout);
+    hoverLeaveTimeout = null;
+  }
+}
+
+function handleCardMouseLeave() {
+  isHoverCardActive.value = false;
+  hoveredContainer.value = null;
+  stopLiveStats();
+}
+
 let refreshTimer = null;
 
 onMounted(async () => {
@@ -680,6 +794,8 @@ onMounted(async () => {
 onUnmounted(() => {
   document.removeEventListener('click', closeMenuOnClickOutside);
   if (refreshTimer) clearInterval(refreshTimer);
+  stopLiveStats();
+  if (hoverLeaveTimeout) clearTimeout(hoverLeaveTimeout);
 });
 </script>
 

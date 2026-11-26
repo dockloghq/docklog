@@ -322,7 +322,7 @@
             >
               <polyline points="18 15 12 9 6 15"></polyline>
             </svg>
-            <span>Load more history ({{ logs.length }} / {{ totalLogs }})</span>
+            <span>Load more history</span>
           </button>
           <div v-else class="history-loading-indicator">
             <div class="mini-spinner"></div>
@@ -330,7 +330,7 @@
           </div>
         </div>
         <div v-else-if="logs.length > 0" class="history-end-msg">
-          Beginning of history reached ({{ totalLogs }} logs)
+          Beginning of history reached
         </div>
 
         <div
@@ -454,15 +454,6 @@ const logsDownloadPath = computed(() => {
   }
   return `/api/containers/${props.container.id}/logs/download`;
 });
-const logsCountPath = computed(() => {
-  if (isPod.value) {
-    return `/api/namespaces/${encodeURIComponent(props.pod.namespace)}/pods/${encodeURIComponent(props.pod.name)}/logs/count`;
-  }
-  if (isService.value) {
-    return `/api/swarm/services/${props.service.id}/logs/count`;
-  }
-  return `/api/containers/${props.container.id}/logs/count`;
-});
 const wsPath = computed(() => {
   const tailParam = sharedState.logSettings?.defaultTail ? `?tail=${sharedState.logSettings.defaultTail}` : "";
   if (isPod.value) {
@@ -518,7 +509,6 @@ const isFullScreen = ref(false);
 const stats = ref({ cpu: "0.00", memory: "0B / 0B", memPercent: 0 });
 const isLoadingHistory = ref(false);
 const hasMoreHistory = ref(true);
-const totalLogs = ref(0);
 const isReconnecting = ref(false);
 let lastFetchedUntil = null;
 let socket = null;
@@ -1058,21 +1048,6 @@ const fetchStats = async () => {
   }
 };
 
-const fetchLogCount = async () => {
-  try {
-    const token = secureStorage.getItem("token");
-    const res = await apiFetch(logsCountPath.value, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (res.ok) {
-      const data = await res.json();
-      totalLogs.value = data.total;
-    }
-  } catch (err) {
-    console.error("Failed to fetch log count:", err);
-  }
-};
-
 const connect = (immediate = false) => {
   if (immediate) reconnectAttempts = 0;
   if (socket) {
@@ -1163,7 +1138,6 @@ onMounted(() => {
   window.addEventListener("keydown", handleSearchShortcut);
   connect();
   fetchStats();
-  fetchLogCount();
   nextTick(setupObserver);
 });
 onUnmounted(() => {
@@ -1190,10 +1164,8 @@ watch(
     historyFetchId++;
     lastFetchedUntil = null;
     logs.value = [];
-    totalLogs.value = 0;
     connect();
     fetchStats();
-    fetchLogCount();
   },
 );
 </script>
