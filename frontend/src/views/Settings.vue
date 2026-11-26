@@ -480,7 +480,7 @@
             >
               <div class="flex items-center gap-2">
                 <span class="config-kicker">ADVANCED STREAM CONTROLS</span>
-                <span class="badge badge-dim text-xs">3 options</span>
+                <span class="badge badge-dim text-xs">4 options</span>
               </div>
               <svg
                 viewBox="0 0 24 24"
@@ -537,6 +537,26 @@
                     <option value="smart">Smart Resume (pauses when inspecting, resumes at bottom)</option>
                     <option value="always">Always Stick to Bottom</option>
                     <option value="manual">Manual Only</option>
+                  </select>
+                  <div class="select-chevron">
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5">
+                      <polyline points="6 9 12 15 18 9"></polyline>
+                    </svg>
+                  </div>
+                </div>
+              </div>
+
+              <div class="config-row">
+                <div class="setting-text-col">
+                  <span class="setting-name">Initial log buffer</span>
+                  <span class="setting-caption">Number of recent lines to load on initial stream connection.</span>
+                </div>
+                <div class="custom-select-wrap">
+                  <select v-model="logPrefs.defaultTail" @change="updateLogPref('defaultTail', logPrefs.defaultTail)">
+                    <option value="50">50 lines (Fastest)</option>
+                    <option value="100">100 lines (Standard)</option>
+                    <option value="250">250 lines</option>
+                    <option value="500">500 lines</option>
                   </select>
                   <div class="select-chevron">
                     <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5">
@@ -602,7 +622,7 @@
                   <span class="setting-caption">Provider: {{ sharedState.isAuthDisabled ? "none" : "built-in bcrypt / HMAC-SHA256" }}</span>
                 </div>
               </div>
-              <div class="flex items-center gap-2">
+              <div class="auth-action-group">
                 <span class="status-pill" :class="sharedState.isAuthDisabled ? 'pill-warn' : 'pill-success'">
                   {{ sharedState.isAuthDisabled ? "No login" : "Enforced" }}
                 </span>
@@ -987,6 +1007,7 @@ const logPrefs = reactive({
   showStreamLabels: sharedState.logSettings?.showStreamLabels ?? true,
   showLineNumbers: sharedState.logSettings?.showLineNumbers ?? false,
   autoScrollMode: sharedState.logSettings?.autoScrollMode || "always",
+  defaultTail: sharedState.logSettings?.defaultTail || "100",
 });
 
 watch(
@@ -1003,6 +1024,7 @@ watch(
       if (newSettings.showStreamLabels !== undefined) logPrefs.showStreamLabels = newSettings.showStreamLabels;
       if (newSettings.showLineNumbers !== undefined) logPrefs.showLineNumbers = newSettings.showLineNumbers;
       if (newSettings.autoScrollMode !== undefined) logPrefs.autoScrollMode = newSettings.autoScrollMode;
+      if (newSettings.defaultTail !== undefined) logPrefs.defaultTail = newSettings.defaultTail;
     }
   },
   { deep: true }
@@ -1042,6 +1064,8 @@ onMounted(async () => {
   if (lineNumbers !== null) logPrefs.showLineNumbers = lineNumbers === true || lineNumbers === "true";
   const autoScroll = secureStorage.getItem("docklog_autoscroll_mode");
   if (autoScroll) logPrefs.autoScrollMode = autoScroll;
+  const defTail = secureStorage.getItem("docklog_default_tail");
+  if (defTail) logPrefs.defaultTail = defTail;
 });
 
 // Reset to defaults
@@ -1494,7 +1518,7 @@ function openChangePasswordModal() {
 .theme-card.selected {
   border-color: var(--accent);
   background: var(--bg-card);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 0 0 1px var(--accent), 0 4px 16px rgba(var(--accent-rgb, 14, 165, 233), 0.15);
 }
 
 .theme-preview-box {
@@ -1517,6 +1541,11 @@ function openChangePasswordModal() {
 
 .preview-dark {
   background: #090d16;
+  border-color: rgba(56, 189, 248, 0.2);
+}
+
+.theme-card:hover .preview-dark {
+  border-color: rgba(56, 189, 248, 0.4);
 }
 
 .preview-auto {
@@ -1555,7 +1584,8 @@ function openChangePasswordModal() {
 /* Custom Select Wrap */
 .custom-select-wrap {
   position: relative;
-  min-width: 170px;
+  min-width: 220px;
+  max-width: 100%;
 }
 
 .custom-select-wrap select {
@@ -1564,12 +1594,14 @@ function openChangePasswordModal() {
   background: var(--bg-input);
   border: 1px solid var(--border);
   color: var(--text-main);
-  padding: 0.45rem 2rem 0.45rem 0.85rem;
+  padding: 0.45rem 2.2rem 0.45rem 0.85rem;
   border-radius: 8px;
   font-size: 0.82rem;
   font-weight: 600;
   cursor: pointer;
   outline: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .custom-select-wrap select:focus {
@@ -1683,12 +1715,16 @@ function openChangePasswordModal() {
 
 /* Log Envelope */
 .log-preview-envelope {
+  position: sticky;
+  top: 1rem;
+  z-index: 10;
   background: #090d16;
   border: 1px solid #1e293b;
   border-radius: 12px;
   margin-bottom: 1.5rem;
   overflow: hidden;
   font-family: var(--font-mono);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
 }
 
 [data-theme="light"] .log-preview-envelope {
@@ -1831,10 +1867,22 @@ function openChangePasswordModal() {
   color: #10b981;
 }
 
+[data-theme="light"] .banner-success {
+  background: #ecfdf5;
+  border-color: #a7f3d0;
+  color: #065f46;
+}
+
 .banner-warn {
   background: rgba(245, 158, 11, 0.08);
   border-color: rgba(245, 158, 11, 0.25);
   color: #f59e0b;
+}
+
+[data-theme="light"] .banner-warn {
+  background: #fffbeb;
+  border-color: #fde68a;
+  color: #92400e;
 }
 
 .banner-body {
@@ -1876,13 +1924,16 @@ function openChangePasswordModal() {
 .status-pill {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   font-size: 0.72rem;
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  padding: 0.25rem 0.65rem;
+  padding: 0 0.65rem;
+  height: 28px;
   border-radius: 9999px;
-  line-height: 1.2;
+  line-height: 1;
+  box-sizing: border-box;
 }
 
 .pill-success {
@@ -1909,19 +1960,28 @@ function openChangePasswordModal() {
   border: 1px solid #cbd5e1;
 }
 
+.auth-action-group {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
 .action-sub-btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 0.45rem;
-  padding: 0.32rem 0.75rem;
-  border-radius: 8px;
+  padding: 0.25rem 0.75rem;
+  height: 28px;
+  border-radius: 9999px;
   background: var(--bg-subtle);
   border: 1px solid var(--border);
   color: var(--text-main);
-  font-size: 0.78rem;
+  font-size: 0.75rem;
   font-weight: 700;
   cursor: pointer;
   transition: all 0.15s ease;
+  white-space: nowrap;
 }
 
 .action-sub-btn:hover {
@@ -1947,6 +2007,12 @@ function openChangePasswordModal() {
   color: #f59e0b;
   font-size: 0.78rem;
   font-weight: 600;
+}
+
+[data-theme="light"] .notice-callout {
+  background: #fffbeb;
+  border-top-color: #fde68a;
+  color: #b45309;
 }
 
 /* Forms */
@@ -2090,16 +2156,19 @@ function openChangePasswordModal() {
 .link-btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 0.45rem;
-  padding: 0.45rem 0.85rem;
-  border-radius: 8px;
-  background: var(--bg-input);
+  padding: 0 0.85rem;
+  height: 28px;
+  border-radius: 9999px;
+  background: var(--bg-subtle);
   border: 1px solid var(--border);
   color: var(--text-dim);
-  font-size: 0.8rem;
-  font-weight: 600;
+  font-size: 0.75rem;
+  font-weight: 700;
   text-decoration: none;
   transition: all 0.15s ease;
+  white-space: nowrap;
 }
 
 .link-btn:hover {

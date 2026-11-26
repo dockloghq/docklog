@@ -89,6 +89,7 @@ export const sharedState = reactive({
     showStreamLabels: parseStorageBool(secureStorage.getItem('docklog_stream_labels'), true),
     showLineNumbers: parseStorageBool(secureStorage.getItem('docklog_line_numbers'), false),
     autoScrollMode: secureStorage.getItem('docklog_autoscroll_mode') || 'always', // 'always' | 'smart' | 'manual'
+    defaultTail: secureStorage.getItem('docklog_default_tail') || '100', // '50' | '100' | '250' | '500'
   },
 
   // General display preferences (synced to settings/general.yaml and localStorage)
@@ -125,6 +126,10 @@ export async function fetchLogcConfig() {
       if (data.auto_scroll_mode) {
         sharedState.logSettings.autoScrollMode = data.auto_scroll_mode;
         secureStorage.setItem('docklog_autoscroll_mode', data.auto_scroll_mode);
+      }
+      if (data.default_tail) {
+        sharedState.logSettings.defaultTail = data.default_tail;
+        secureStorage.setItem('docklog_default_tail', data.default_tail);
       }
 
       // Sync to local storage
@@ -221,6 +226,9 @@ export async function saveLogSettings(newSettings) {
   if (newSettings.autoScrollMode !== undefined) {
     secureStorage.setItem('docklog_autoscroll_mode', newSettings.autoScrollMode);
   }
+  if (newSettings.defaultTail !== undefined) {
+    secureStorage.setItem('docklog_default_tail', newSettings.defaultTail);
+  }
 
   // Persist to backend settings/logc.yaml
   try {
@@ -235,6 +243,7 @@ export async function saveLogSettings(newSettings) {
       show_stream_labels: sharedState.logSettings.showStreamLabels,
       show_line_numbers: sharedState.logSettings.showLineNumbers,
       auto_scroll_mode: sharedState.logSettings.autoScrollMode,
+      default_tail: sharedState.logSettings.defaultTail,
     };
     await apiFetch('/api/system/logc', {
       method: 'POST',

@@ -92,7 +92,10 @@ export async function fetchPods() {
 function startPolling() {
   if (pollInterval) return;
   fetchNamespaces().then(fetchPods);
-  pollInterval = setInterval(fetchPods, 5000);
+  pollInterval = setInterval(() => {
+    if (typeof document !== 'undefined' && document.hidden) return;
+    fetchPods();
+  }, 8000);
 }
 
 function stopPolling() {

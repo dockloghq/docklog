@@ -5,10 +5,10 @@ font_size: "small"
 compact_mode: false
 show_timestamps: true
 soft_wrap: true
-highlight_errors: true
+highlight_errors: false
 time_format: "auto"
 date_format: "YYYY-MM-DD"
 show_stream_labels: false
 show_line_numbers: false
 auto_scroll_mode: "always"
-
+default_tail: "50"

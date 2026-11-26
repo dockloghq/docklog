@@ -16,7 +16,7 @@ let subscriberCount = 0;
 
 const activeLiveId = ref(null);
 const liveStats = ref({ cpu: 0, memory: 0 });
-let liveInterval = null;
+let liveStatsWs = null;
 
 export async function fetchContainers() {
   try {
@@ -82,13 +82,6 @@ function connectEventsWebSocket() {
 function startRealtimeSync() {
   fetchContainers();
   connectEventsWebSocket();
-  // Safe low-frequency fallback (every 30s instead of aggressive 3s polling)
-  if (!fallbackInterval) {
-    fallbackInterval = setInterval(() => {
-      if (typeof document !== 'undefined' && document.hidden) return;
-      fetchContainers();
-    }, 30000);
-  }
 }
 
 function stopRealtimeSync() {
@@ -160,33 +153,32 @@ export function useContainers(options = {}) {
     () => standaloneContainers.value.filter((c) => c.state !== 'running').length,
   );
 
-  const fetchStatsNow = async (id) => {
-    try {
-      const token = secureStorage.getItem('token');
-      const res = await apiFetch(`/api/containers/${id}/stats-now`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        liveStats.value = { cpu: data.cpu, memory: data.memory };
-      }
-    } catch (err) {
-      console.error('Live stats fetch failed', err);
-    }
-  };
-
   const startLiveStats = (id) => {
     activeLiveId.value = id;
-    fetchStatsNow(id);
-    if (liveInterval) clearInterval(liveInterval);
-    liveInterval = setInterval(() => fetchStatsNow(id), 2000);
+    stopLiveStats();
+    activeLiveId.value = id;
+    try {
+      liveStatsWs = createAuthenticatedWebSocket(`/ws/containers/${id}/stats`);
+      liveStatsWs.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          liveStats.value = { cpu: data.cpu, memory: data.memory };
+        } catch (e) {}
+      };
+      liveStatsWs.onerror = () => {
+        stopLiveStats();
+      };
+    } catch (e) {
+      liveStatsWs = null;
+    }
   };
 
   const stopLiveStats = () => {
     activeLiveId.value = null;
-    if (liveInterval) {
-      clearInterval(liveInterval);
-      liveInterval = null;
+    if (liveStatsWs) {
+      liveStatsWs.onclose = null;
+      liveStatsWs.close();
+      liveStatsWs = null;
     }
   };
 

@@ -284,12 +284,24 @@
                 <span class="age-text">{{ item.age }}</span>
               </td>
 
-              <!-- Actions (external jump + vertical menu) -->
+              <!-- Actions (logs, external jump) -->
               <td class="col-actions text-right">
                 <div class="row-actions">
                   <button
+                    v-if="item.logsRoute"
                     class="action-btn-icon"
-                    title="Open details"
+                    title="View logs"
+                    @click="handleItemLogs(item)"
+                  >
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                      <path d="M8 9h8M8 13h5"></path>
+                    </svg>
+                  </button>
+
+                  <button
+                    class="action-btn-icon"
+                    title="View details"
                     @click="handleItemNavigate(item)"
                   >
                     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
@@ -298,29 +310,6 @@
                       <line x1="10" y1="14" x2="21" y2="3" />
                     </svg>
                   </button>
-
-                  <div class="menu-container">
-                    <button
-                      class="action-btn-icon"
-                      title="More options"
-                      @click="toggleMenu(item.uniqueKey)"
-                    >
-                      <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
-                        <circle cx="12" cy="5" r="1.5" />
-                        <circle cx="12" cy="12" r="1.5" />
-                        <circle cx="12" cy="19" r="1.5" />
-                      </svg>
-                    </button>
-
-                    <div
-                      v-if="openMenuId === item.uniqueKey"
-                      class="row-menu-dropdown"
-                      @click="openMenuId = null"
-                    >
-                      <button @click="handleItemNavigate(item)">View Details</button>
-                      <button @click="handleItemLogs(item)">View Logs</button>
-                    </div>
-                  </div>
                 </div>
               </td>
             </tr>
@@ -686,14 +675,6 @@ onMounted(async () => {
     fetchNamespaces();
     fetchKubernetesData();
   }
-
-  refreshTimer = setInterval(() => {
-    fetchContainers();
-    fetchSwarmData();
-    if (kubernetesEnabled() && sharedState.k8sAvailable) {
-      fetchKubernetesData();
-    }
-  }, 10000);
 });
 
 onUnmounted(() => {

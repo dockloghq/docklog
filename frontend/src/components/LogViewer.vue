@@ -464,13 +464,14 @@ const logsCountPath = computed(() => {
   return `/api/containers/${props.container.id}/logs/count`;
 });
 const wsPath = computed(() => {
+  const tailParam = sharedState.logSettings?.defaultTail ? `?tail=${sharedState.logSettings.defaultTail}` : "";
   if (isPod.value) {
-    return `/ws/pod-logs/${encodeURIComponent(props.pod.namespace)}/${encodeURIComponent(props.pod.name)}`;
+    return `/ws/pod-logs/${encodeURIComponent(props.pod.namespace)}/${encodeURIComponent(props.pod.name)}${tailParam}`;
   }
   if (isService.value) {
-    return `/ws/swarm/services/${props.service.id}/logs`;
+    return `/ws/swarm/services/${props.service.id}/logs${tailParam}`;
   }
-  return `/ws/logs/${props.container.id}`;
+  return `/ws/logs/${props.container.id}${tailParam}`;
 });
 const downloadFilename = computed(() => {
   if (isPod.value) return `${props.pod.name}_${props.pod.namespace}`;
@@ -480,6 +481,16 @@ const downloadFilename = computed(() => {
 
 const logs = ref([]);
 const logSearchQuery = ref("");
+const debouncedSearchQuery = ref("");
+let searchDebounceTimer = null;
+
+watch(logSearchQuery, (val) => {
+  if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+  searchDebounceTimer = setTimeout(() => {
+    debouncedSearchQuery.value = val;
+  }, 150);
+});
+
 const logSearchInputRef = ref(null);
 const logContainer = ref(null);
 const scrollSentinel = ref(null);
@@ -658,6 +669,18 @@ const formatLogTimestamp = (date) => {
 };
 
 const formatLogLineTime = (text) => {
+  // If the log line starts with an ISO timestamp, extract and format it quickly
+  if (typeof text === 'string') {
+    const rawTs = text.length >= 20 && text[4] === '-' && text[7] === '-' && text[10] === 'T'
+      ? text.substring(0, text.indexOf(' ', 19) !== -1 ? text.indexOf(' ', 19) : 20)
+      : null;
+    if (rawTs) {
+      const d = new Date(rawTs);
+      if (!Number.isNaN(d.getTime())) {
+        return formatLogTimestamp(d);
+      }
+    }
+  }
   const { timestamp } = parseLogLine(text);
   return timestamp ? formatLogTimestamp(timestamp) : "";
 };
@@ -694,9 +717,9 @@ const formatLog = (text) => {
     .replace(/(WARN|Warning)/gi, '<span class="text-warning">$1</span>')
     .replace(/(INFO|OK|Success)/gi, '<span class="text-success">$1</span>');
 
-  if (logSearchQuery.value && logSearchQuery.value.length >= 2) {
+  if (debouncedSearchQuery.value && debouncedSearchQuery.value.length >= 2) {
     const regex = new RegExp(
-      `(${logSearchQuery.value.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, "\\$&")})`,
+      `(${debouncedSearchQuery.value.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, "\\$&")})`,
       "gi",
     );
     formatted = formatted.replace(
@@ -711,10 +734,9 @@ const MAX_RENDERED_LOGS = 2000;
 
 const displayLogs = computed(() => {
   let source = logs.value;
-  if (logSearchQuery.value && logSearchQuery.value.length >= 2) {
-    source = logs.value.filter((l) =>
-      l.toLowerCase().includes(logSearchQuery.value.toLowerCase()),
-    );
+  if (debouncedSearchQuery.value && debouncedSearchQuery.value.length >= 2) {
+    const q = debouncedSearchQuery.value.toLowerCase();
+    source = logs.value.filter((l) => l.toLowerCase().includes(q));
   }
   if (source.length > MAX_RENDERED_LOGS) {
     return source.slice(-MAX_RENDERED_LOGS);
@@ -1080,18 +1102,29 @@ const connect = (immediate = false) => {
           if (logs.value.length === 0) {
             logs.value.push(...batchBuffer);
           } else {
-            const existingSet = new Set(logs.value);
-            for (const item of batchBuffer) {
-              if (!existingSet.has(item)) {
+            // Deduplicate only against the recent tail of logs without allocating a massive Set
+            const checkCount = Math.min(logs.value.length, 150);
+            const recentTail = logs.value.slice(-checkCount);
+            const recentSet = new Set(recentTail);
+
+            for (let i = 0; i < batchBuffer.length; i++) {
+              const item = batchBuffer[i];
+              if (!recentSet.has(item)) {
                 logs.value.push(item);
-                existingSet.add(item);
+                recentSet.add(item);
               }
             }
           }
           batchBuffer = [];
-          if (autoScroll.value && logs.value.length > 5000) {
-            logs.value.splice(0, logs.value.length - 5000);
+
+          // Enforce bounds to prevent high CPU / RAM leaks:
+          // In autoScroll mode, keep last 5,000 lines.
+          // Even when paused / scrolled up, cap at 10,000 lines so long-running tabs don't bloat memory.
+          const maxBufferLimit = autoScroll.value ? 5000 : 10000;
+          if (logs.value.length > maxBufferLimit) {
+            logs.value.splice(0, logs.value.length - maxBufferLimit);
           }
+
           if (autoScroll.value) {
             scrollToBottom();
           }
@@ -1146,6 +1179,10 @@ onUnmounted(() => {
   }
   if (statsController) statsController.abort();
   if (observer) observer.disconnect();
+  if (searchDebounceTimer) {
+    clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = null;
+  }
 });
 watch(
   () => resourceKey.value,

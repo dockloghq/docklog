@@ -692,7 +692,10 @@ onMounted(async () => {
   await fetchPod();
   if (isRunning.value) {
     await fetchLiveStats();
-    statsTimer = setInterval(fetchLiveStats, 3000);
+    statsTimer = setInterval(() => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      fetchLiveStats();
+    }, 3000);
   }
 });
 

@@ -31,6 +31,7 @@ type LogcConfig struct {
 	ShowStreamLabels bool   `json:"show_stream_labels" yaml:"show_stream_labels"`
 	ShowLineNumbers  bool   `json:"show_line_numbers" yaml:"show_line_numbers"`
 	AutoScrollMode   string `json:"auto_scroll_mode" yaml:"auto_scroll_mode"`
+	DefaultTail      string `json:"default_tail" yaml:"default_tail"`
 }
 
 type GeneralConfig struct {
@@ -231,6 +232,9 @@ func (s *Server) registerSystemRoutes(r *echo.Group) {
 		}
 		if v, ok := incoming["auto_scroll_mode"].(string); ok && v != "" {
 			current.AutoScrollMode = v
+		}
+		if v, ok := incoming["default_tail"].(string); ok && v != "" {
+			current.DefaultTail = v
 		}
 
 		if err := saveLogcConfig(current); err != nil {

@@ -525,6 +525,7 @@ import { usePods } from "../composables/usePods";
 import { useSwarm } from "../composables/useSwarm";
 import { secureStorage } from "../utils/storage";
 import { apiFetch } from "../utils/apiFetch";
+import { createAuthenticatedWebSocket } from "../utils/wsAuth";
 import ContainerHoverCard from "../components/ContainerHoverCard.vue";
 import LogViewer from "../components/LogViewer.vue";
 
@@ -566,6 +567,11 @@ const handleContainerMouseEnter = (c, event) => {
     hoverLeaveTimeout = null;
   }
   hoveredContainer.value = c;
+  // Initialize with container's cached values so it doesn't flash 0
+  liveStats.value = {
+    cpu: c.cpu || 0,
+    memory: c.memory || 0,
+  };
   if (event && event.currentTarget) {
     const rect = event.currentTarget.getBoundingClientRect();
     const top = Math.max(10, Math.min(window.innerHeight - 350, rect.top));
@@ -597,31 +603,34 @@ const handleCardMouseLeave = () => {
   stopLiveStats();
 };
 
+let liveStatsWs = null;
+
 const startLiveStats = (id) => {
   activeLiveId.value = id;
-  fetchStatsNow(id);
-  if (liveInterval) clearInterval(liveInterval);
-  liveInterval = setInterval(() => fetchStatsNow(id), 1000);
+  stopLiveStats();
+  activeLiveId.value = id;
+  try {
+    liveStatsWs = createAuthenticatedWebSocket(`/ws/containers/${id}/stats`);
+    liveStatsWs.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        liveStats.value = { cpu: data.cpu, memory: data.memory };
+      } catch (e) {}
+    };
+    liveStatsWs.onerror = () => {
+      stopLiveStats();
+    };
+  } catch (e) {
+    liveStatsWs = null;
+  }
 };
 
 const stopLiveStats = () => {
   activeLiveId.value = null;
-  if (liveInterval) clearInterval(liveInterval);
-  liveInterval = null;
-};
-
-const fetchStatsNow = async (id) => {
-  try {
-    const token = secureStorage.getItem("token");
-    const res = await apiFetch(`/api/containers/${id}/stats-now`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (res.ok) {
-      const data = await res.json();
-      liveStats.value = { cpu: data.cpu, memory: data.memory };
-    }
-  } catch (err) {
-    console.error("Live stats fetch failed", err);
+  if (liveStatsWs) {
+    liveStatsWs.onclose = null;
+    liveStatsWs.close();
+    liveStatsWs = null;
   }
 };
 
@@ -825,6 +834,37 @@ const syncStateFromUrl = () => {
   }
 };
 
+// Helper matching functions for container identification & recreation tracking
+const cleanContainerName = (name) => {
+  if (!name) return "";
+  return name.startsWith("/") ? name.slice(1).trim().toLowerCase() : name.trim().toLowerCase();
+};
+
+const cleanImageName = (image) => {
+  if (!image) return "";
+  const trimmed = image.trim().toLowerCase();
+  // Strip tag or sha if present for base comparison (e.g., adminer:latest -> adminer)
+  const atIdx = trimmed.indexOf("@");
+  const withoutSha = atIdx !== -1 ? trimmed.slice(0, atIdx) : trimmed;
+  const colonIdx = withoutSha.lastIndexOf(":");
+  return colonIdx !== -1 ? withoutSha.slice(0, colonIdx) : withoutSha;
+};
+
+const isImageMatch = (img1, img2) => {
+  if (!img1 || !img2) return true; // If one doesn't specify image, fall back to name match
+  const t1 = img1.trim().toLowerCase();
+  const t2 = img2.trim().toLowerCase();
+  return t1 === t2 || cleanImageName(t1) === cleanImageName(t2);
+};
+
+const isContainerRecreationMatch = (candidate, target) => {
+  if (!candidate || !target) return false;
+  const nameMatch = cleanContainerName(candidate.name) === cleanContainerName(target.name);
+  if (!nameMatch) return false;
+  // Must match image as well
+  return isImageMatch(candidate.image, target.image);
+};
+
 const displayContainers = computed(() => {
   if (containers.value.length === 0 || selectedContainerIds.value.length === 0) {
     return [];
@@ -837,6 +877,29 @@ const displayContainers = computed(() => {
         match = containers.value.find(
           (c) => c.id.startsWith(id) || id.startsWith(c.id),
         );
+      }
+      // If container was recreated (ID changed, but same name and same image)
+      if (!match && previousContainersMap.size > 0) {
+        const prev = previousContainersMap.get(id) ||
+          Array.from(previousContainersMap.values()).find(
+            (c) => c.id === id || c.id.startsWith(id) || id.startsWith(c.id)
+          );
+        if (prev && prev.name) {
+          match = containers.value.find((c) => isContainerRecreationMatch(c, prev));
+          // Seamlessly update selectedContainerIds to new ID
+          if (match) {
+            const idx = selectedContainerIds.value.indexOf(id);
+            if (idx !== -1) {
+              selectedContainerIds.value[idx] = match.id;
+              updateUrl();
+              showToast(
+                "Container Reconnected",
+                `Container "${match.name}" restarted with new ID (${match.id.substring(0, 12)}). Stream reconnected.`,
+                "info"
+              );
+            }
+          }
+        }
       }
       return match;
     })
@@ -927,20 +990,36 @@ const gridClass = computed(() =>
 let previousContainersMap = new Map();
 let followTransitionTimers = new Map();
 
+// Update known containers cache so stopped containers retain their metadata (name, image)
+const updateKnownContainersCache = (newContainersList) => {
+  if (!Array.isArray(newContainersList)) return;
+  newContainersList.forEach((c) => {
+    if (c && c.id) {
+      previousContainersMap.set(c.id, c);
+    }
+  });
+  // Cap map size to avoid memory leak over time
+  if (previousContainersMap.size > 200) {
+    const keys = Array.from(previousContainersMap.keys());
+    for (let i = 0; i < keys.length - 100; i++) {
+      // Don't delete currently selected IDs
+      if (!selectedContainerIds.value.includes(keys[i])) {
+        previousContainersMap.delete(keys[i]);
+      }
+    }
+  }
+};
+
 const handleContainerRecreationTracking = (newContainersList) => {
   if (!Array.isArray(newContainersList)) return;
   const followMode = sharedState.generalSettings?.followRecreated || "delayed";
   if (followMode === "never") {
-    // Update map without auto-following
-    previousContainersMap = new Map(newContainersList.map((c) => [c.id, c]));
+    updateKnownContainersCache(newContainersList);
     return;
   }
 
   // Check each currently selected container
   if (selectedContainerIds.value.length > 0 && previousContainersMap.size > 0) {
-    const updatedIds = [...selectedContainerIds.value];
-    let changed = false;
-
     selectedContainerIds.value.forEach((currentId, index) => {
       // Check if currentId exists in new list
       const stillExists = newContainersList.some(
@@ -955,9 +1034,9 @@ const handleContainerRecreationTracking = (newContainersList) => {
           );
 
         if (prevContainer && prevContainer.name) {
-          // Look for new container with matching name
+          // Look for new container with matching name and image
           const replacement = newContainersList.find(
-            (c) => c.name === prevContainer.name && c.id !== currentId
+            (c) => isContainerRecreationMatch(c, prevContainer) && c.id !== currentId
           );
 
           if (replacement) {
@@ -966,8 +1045,8 @@ const handleContainerRecreationTracking = (newContainersList) => {
                 selectedContainerIds.value[index] = replacement.id;
                 updateUrl();
                 showToast(
-                  "Container Recreated",
-                  `Following ${replacement.name} (${replacement.id.substring(0, 12)})`,
+                  "Container Reconnected",
+                  `Container "${replacement.name}" restarted with new ID (${replacement.id.substring(0, 12)}). Stream reconnected.`,
                   "info"
                 );
               }
@@ -975,7 +1054,6 @@ const handleContainerRecreationTracking = (newContainersList) => {
 
             if (followMode === "immediate") {
               doSwitch();
-              changed = true;
             } else if (followMode === "delayed") {
               // Delayed (Smooth): wait 1500ms before seamlessly switching
               if (!followTransitionTimers.has(currentId)) {
@@ -997,7 +1075,7 @@ const handleContainerRecreationTracking = (newContainersList) => {
     });
   }
 
-  previousContainersMap = new Map(newContainersList.map((c) => [c.id, c]));
+  updateKnownContainersCache(newContainersList);
 };
 
 const fetchContainers = async () => {
@@ -1247,18 +1325,67 @@ const removeStream = (stream) => {
   updateUrl();
 };
 
+let logsEventsWs = null;
 let statusInterval = null;
+let logsReconnectTimer = null;
+let logsDebounceTimer = null;
+
+const scheduleLogsResourceRefresh = (delay = 400) => {
+  if (logsDebounceTimer) clearTimeout(logsDebounceTimer);
+  logsDebounceTimer = setTimeout(() => {
+    fetchResources();
+  }, delay);
+};
+
+const connectLogsEventsWebSocket = () => {
+  if (logsEventsWs) return;
+  try {
+    logsEventsWs = createAuthenticatedWebSocket('/ws/events');
+    logsEventsWs.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.Type === 'container' || msg.status || msg.Action) {
+          scheduleLogsResourceRefresh(300);
+        }
+      } catch (e) {
+        scheduleLogsResourceRefresh(500);
+      }
+    };
+    logsEventsWs.onclose = () => {
+      logsEventsWs = null;
+      if (!logsReconnectTimer) {
+        logsReconnectTimer = setTimeout(connectLogsEventsWebSocket, 5000);
+      }
+    };
+    logsEventsWs.onerror = () => {
+      if (logsEventsWs) logsEventsWs.close();
+    };
+  } catch (e) {
+    logsEventsWs = null;
+  }
+};
 
 onMounted(() => {
   fetchResources();
-  statusInterval = setInterval(() => {
-    if (typeof document !== 'undefined' && document.hidden) return;
-    fetchResources();
-  }, 5000);
+  connectLogsEventsWebSocket();
 });
 
 onUnmounted(() => {
+  if (logsEventsWs) {
+    logsEventsWs.onclose = null;
+    logsEventsWs.close();
+    logsEventsWs = null;
+  }
+  if (logsReconnectTimer) {
+    clearTimeout(logsReconnectTimer);
+    logsReconnectTimer = null;
+  }
+  if (logsDebounceTimer) {
+    clearTimeout(logsDebounceTimer);
+    logsDebounceTimer = null;
+  }
   if (statusInterval) clearInterval(statusInterval);
+  stopLiveStats();
   followTransitionTimers.forEach((timer) => clearTimeout(timer));
   followTransitionTimers.clear();
 });

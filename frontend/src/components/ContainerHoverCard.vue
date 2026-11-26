@@ -141,11 +141,17 @@ const emit = defineEmits(['card-mouseenter', 'card-mouseleave']);
 const router = useRouter();
 
 const currentCpu = computed(() => {
-  return props.stats?.cpu ?? props.container?.cpu ?? 0;
+  if (props.stats && props.stats.cpu !== undefined && props.stats.cpu !== null) {
+    return props.stats.cpu;
+  }
+  return props.container?.cpu ?? 0;
 });
 
 const currentMem = computed(() => {
-  return props.stats?.memory ?? props.container?.memory ?? 0;
+  if (props.stats && props.stats.memory > 0) {
+    return props.stats.memory;
+  }
+  return props.container?.memory ?? (props.stats?.memory || 0);
 });
 
 const activeCpuBars = computed(() => {

@@ -2,8 +2,10 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -148,11 +150,23 @@ func (s *Server) registerWebSocketRoutes() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
+		tailLimit := "100"
+		if customTail := c.QueryParam("tail"); customTail != "" {
+			if num, err := strconv.Atoi(customTail); err == nil && num > 0 && num <= 2000 {
+				tailLimit = customTail
+			}
+		} else {
+			cfg := readLogcConfig()
+			if cfg.DefaultTail != "" {
+				tailLimit = cfg.DefaultTail
+			}
+		}
+
 		out, err := cli.ContainerLogs(ctx, id, client.ContainerLogsOptions{
 			ShowStdout: true,
 			ShowStderr: true,
 			Follow:     true,
-			Tail:       "100",
+			Tail:       tailLimit,
 			Timestamps: true,
 		})
 		if err != nil {
@@ -165,6 +179,128 @@ func (s *Server) registerWebSocketRoutes() {
 			return ws.WriteMessage(websocket.TextMessage, payload)
 		})
 		return nil
+	})
+
+	s.echo.GET("/ws/containers/:id/stats", func(c echo.Context) error {
+		id := c.Param("id")
+
+		userClaims, err := middleware.AuthenticateWS(c)
+		if err != nil {
+			return middleware.WSAuthError(c, err)
+		}
+
+		container, err := cli.ContainerInspect(context.Background(), id, client.ContainerInspectOptions{})
+		if err != nil {
+			return c.NoContent(http.StatusNotFound)
+		}
+		statsImage := ""
+		if container.Container.Config != nil {
+			statsImage = container.Container.Config.Image
+		}
+		if containers.InspectContainerExcluded(container.Container.Name, statsImage) {
+			return c.NoContent(http.StatusNotFound)
+		}
+		containerName := strings.TrimPrefix(container.Container.Name, "/")
+
+		if !userClaims.IsAdmin {
+			patterns := access.GetAuthorizedPatterns(userClaims.ID)
+			authorized := false
+			for _, p := range patterns {
+				if matched, _ := regexp.MatchString(p, containerName); matched {
+					authorized = true
+					break
+				}
+			}
+			if !authorized {
+				return c.JSON(http.StatusForbidden, map[string]string{"error": "Access Denied"})
+			}
+		}
+
+		longID := container.Container.ID
+		if longID == "" {
+			longID = id
+		}
+		shortID := longID
+		if len(shortID) > 12 {
+			shortID = shortID[:12]
+		}
+
+		ws, err := middleware.UpgradeAuthenticatedWS(c)
+		if err != nil {
+			return err
+		}
+		defer ws.Close()
+
+		hasCheckedDirectStats := false
+		sendStats := func() error {
+			var cpu float64
+			var mem int64
+			found := false
+
+			if pt, ok := stats.Registry.GetContainerLast(longID); ok && pt.Memory > 0 {
+				cpu = pt.CPU
+				mem = pt.Memory
+				found = true
+			} else if pt, ok := stats.Registry.GetContainerLast(shortID); ok && pt.Memory > 0 {
+				cpu = pt.CPU
+				mem = pt.Memory
+				found = true
+			} else if pt, ok := stats.Registry.GetContainerLast(id); ok && pt.Memory > 0 {
+				cpu = pt.CPU
+				mem = pt.Memory
+				found = true
+			}
+
+			if !found {
+				_ = db.DB.QueryRow("SELECT cpu, memory FROM stats WHERE (container_id = ? OR container_id = ? OR container_id = ?) ORDER BY timestamp DESC LIMIT 1", longID, shortID, id).Scan(&cpu, &mem)
+			}
+
+			// If memory is still 0 (e.g. newly started container or ringbuffer empty), fetch once directly from Docker stats
+			if mem == 0 && !hasCheckedDirectStats {
+				hasCheckedDirectStats = true
+				if sRaw, err := cli.ContainerStats(context.Background(), longID, client.ContainerStatsOptions{Stream: false}); err == nil {
+					var v2 struct {
+						MemoryStats struct {
+							Usage uint64            `json:"usage"`
+							Stats map[string]uint64 `json:"stats"`
+						} `json:"memory_stats"`
+					}
+					if err := json.NewDecoder(sRaw.Body).Decode(&v2); err == nil {
+						cache := v2.MemoryStats.Stats["cache"]
+						if v2.MemoryStats.Usage > cache {
+							mem = int64(v2.MemoryStats.Usage - cache)
+						} else {
+							mem = int64(v2.MemoryStats.Usage)
+						}
+					}
+					sRaw.Body.Close()
+				}
+			}
+
+			return ws.WriteJSON(map[string]interface{}{
+				"cpu":    cpu,
+				"memory": mem,
+			})
+		}
+
+		// Send initial point immediately
+		if err := sendStats(); err != nil {
+			return nil
+		}
+
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				if err := sendStats(); err != nil {
+					return nil
+				}
+			case <-c.Request().Context().Done():
+				return nil
+			}
+		}
 	})
 
 	s.echo.GET("/ws/shell/:id", func(c echo.Context) error {
